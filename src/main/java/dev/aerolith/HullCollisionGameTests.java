@@ -14,6 +14,7 @@ import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -69,26 +70,32 @@ public final class HullCollisionGameTests {
     public static void placementSeesBothSidesOfAColumnAndTracksHullChanges(GameTestHelper test) {
         Vec3 at = origin(test);
         Vec3 edge = new Vec3(Math.floor(at.x / 16) * 16 + 0.1, at.y + 30, at.z);
-        CraftEntity craft = craft(test, edge, planks(BlockPos.ZERO));
         var level = test.getLevel();
-        AABB otherSide = AABB.ofSize(edge.add(-0.3, 0, 0), 0.1, 0.1, 0.1);
-        test.assertTrue(HullCollisions.overlapsCraft(level, otherSide, null), "Hull straddling a chunk edge was missed");
-        test.assertTrue(!HullCollisions.overlapsCraft(level, otherSide, craft), "Ignored hull reported an overlap");
-
         Vec3 moved = edge.add(34, 0, 0);
-        pose(craft, moved, new Quaternionf());
-        AABB center = AABB.ofSize(moved, 0.1, 0.1, 0.1);
-        test.assertTrue(!HullCollisions.overlapsCraft(level, otherSide, null)
-                && HullCollisions.overlapsCraft(level, center, null), "Moved hull did not change columns");
+        BlockPos destination = BlockPos.containing(moved);
+        var chunk = new ChunkPos(destination);
+        // A chunk can be loaded without tracking entities; test the hull index, not chunk visibility.
+        level.setChunkForced(chunk.x, chunk.z, true);
+        test.startSequence().thenWaitUntil(() -> test.assertTrue(level.isPositionEntityTicking(destination),
+                "Destination chunk was not ready for the move")).thenExecute(() -> {
+            CraftEntity craft = craft(test, edge, planks(BlockPos.ZERO));
+            AABB otherSide = AABB.ofSize(edge.add(-0.3, 0, 0), 0.1, 0.1, 0.1);
+            test.assertTrue(HullCollisions.overlapsCraft(level, otherSide, null), "Hull straddling a chunk edge was missed");
+            test.assertTrue(!HullCollisions.overlapsCraft(level, otherSide, craft), "Ignored hull reported an overlap");
 
-        craft.edit(List.of(planks(BlockPos.ZERO), planks(new BlockPos(35, 0, 0))), List.of());
-        AABB tip = center.move(35, 0, 0);
-        test.assertTrue(HullCollisions.overlapsCraft(level, tip, null), "Distant part of a wide hull was missed");
-        test.assertTrue(!HullCollisions.overlapsCraft(level, center.move(17, 0, 0), null), "Index filled a gap in the wide hull");
-        craft.discard();
-        test.assertTrue(!HullCollisions.overlapsCraft(level, center, null)
-                && !HullCollisions.overlapsCraft(level, tip, null), "Removed hull stayed in the index");
-        test.succeed();
+            pose(craft, moved, new Quaternionf());
+            AABB center = AABB.ofSize(moved, 0.1, 0.1, 0.1);
+            test.assertTrue(!HullCollisions.overlapsCraft(level, otherSide, null)
+                    && HullCollisions.overlapsCraft(level, center, null), "Moved hull did not change columns");
+
+            craft.edit(List.of(planks(BlockPos.ZERO), planks(new BlockPos(35, 0, 0))), List.of());
+            AABB tip = center.move(35, 0, 0);
+            test.assertTrue(HullCollisions.overlapsCraft(level, tip, null), "Distant part of a wide hull was missed");
+            test.assertTrue(!HullCollisions.overlapsCraft(level, center.move(17, 0, 0), null), "Index filled a gap in the wide hull");
+            craft.discard();
+            test.assertTrue(!HullCollisions.overlapsCraft(level, center, null)
+                    && !HullCollisions.overlapsCraft(level, tip, null), "Removed hull stayed in the index");
+        }).thenSucceed();
     }
 
     @GameTest(template = "test_pad")
