@@ -117,7 +117,7 @@ final class CraftEditing {
      * mines it like any block: the time follows the block's hardness and the tool, and every punch pushes the craft.
      */
     static void hit(ServerPlayer player, CraftEntity craft, Target chosen) {
-        if (player.isSpectator() || !player.getAbilities().mayBuild || player.getMainHandItem().is(Aerolith.TOW_STAFF.get())) return;
+        if (player.isSpectator() || !player.getAbilities().mayBuild || !TowStaffItem.held(player).isEmpty()) return;
         if (!craft.canEdit(player)) {
             AssemblerItem.message(player, "owner");
             return;

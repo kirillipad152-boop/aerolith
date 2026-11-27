@@ -245,6 +245,28 @@ pub extern "system" fn Java_dev_aerolith_NativePhysics_impulse<'a>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerolith_NativePhysics_staffPull<'a>(
+    mut env: EnvUnowned<'a>,
+    _: JClass<'a>,
+    world: jlong,
+    body: jlong,
+    ix: jdouble,
+    iy: jdouble,
+    iz: jdouble,
+    qx: jdouble,
+    qy: jdouble,
+    qz: jdouble,
+    qw: jdouble,
+) {
+    env.with_env(|_| {
+        in_world(world, |w| {
+            w.staff_pull(body, Vec3::new(ix, iy, iz), Quaternion::new(qw, qx, qy, qz))
+        })
+    })
+    .resolve::<JavaException>();
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_aerolith_NativePhysics_impulseAt<'a>(
     mut env: EnvUnowned<'a>,
     _: JClass<'a>,

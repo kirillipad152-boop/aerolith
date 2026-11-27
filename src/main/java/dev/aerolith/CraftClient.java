@@ -75,10 +75,6 @@ public final class CraftClient {
             CRACKS.values().removeIf(crack -> crack.expires() <= level.getGameTime()
                     || !(level.getEntity(crack.update().craft()) instanceof CraftEntity));
         }
-        if (client.screen == null && client.player != null && client.player.getUseItem().is(Aerolith.TOW_STAFF.get())) {
-            // Vanilla discards attack presses during item use; the staff pins the held craft on that press.
-            while (client.options.keyAttack.consumeClick()) attackTapped = true;
-        }
         correctTarget(1f);
     }
 
@@ -108,6 +104,7 @@ public final class CraftClient {
     public static void interaction(InputEvent.InteractionKeyMappingTriggered event) {
         if (!event.isAttack() && !event.isUseItem() && !event.isPickBlock()) return;
         Minecraft client = Minecraft.getInstance();
+        if (TowStaffClient.intercept(client, event)) return;
         float partial = client.getTimer().getGameTimeDeltaPartialTick(true);
         correctTarget(partial);
         CraftEditing.Located aimed = aimed(partial);
@@ -129,7 +126,6 @@ public final class CraftClient {
     }
 
     private static boolean attackTapped;
-    private static boolean attackDown;
 
     private static void send(CraftEditing.Located aimed, boolean attack, boolean offHand) {
         CraftEditing.Target target = aimed.target();
@@ -143,14 +139,8 @@ public final class CraftClient {
         Minecraft client = Minecraft.getInstance();
         boolean tapped = attackTapped;
         attackTapped = false;
-        boolean down = client.options.keyAttack.isDown();
-        boolean pressed = down ? !attackDown : tapped;
-        attackDown = down;
-        if (client.player == null || client.screen != null || (!tapped && !down)) return;
-        if (client.player.getMainHandItem().is(Aerolith.TOW_STAFF.get())) {
-            if (pressed && (client.player.isUsingItem() || aimed(1f) != null)) PacketDistributor.sendToServer(CraftClick.STAFF_ANCHOR);
-            return;
-        }
+        if (client.player == null || client.screen != null || (!tapped && !client.options.keyAttack.isDown())
+                || !TowStaffItem.held(client.player).isEmpty()) return;
         CraftEditing.Located aimed = aimed(1f);
         if (aimed == null) return;
         if (!client.player.swinging) client.player.swing(InteractionHand.MAIN_HAND);

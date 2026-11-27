@@ -497,6 +497,34 @@ impl World {
         Ok(())
     }
 
+    fn staff_pull(&mut self, id: i64, impulse: Vec3, orientation: Quaternion<f64>) -> Result<()> {
+        bound(
+            impulse.iter().copied(),
+            -1.0e15,
+            1.0e15,
+            "impulse out of range",
+        )?;
+        if !(0.5..=2.0).contains(&orientation.norm_squared()) {
+            return Err(Fault::Argument("invalid staff orientation"));
+        }
+        let craft = self
+            .crafts
+            .get(&id)
+            .ok_or(Fault::Argument("unknown body handle"))?;
+        if craft.frozen.is_some() {
+            return Ok(());
+        }
+        let body = &mut self.bodies[craft.handle];
+        let error = UnitQuaternion::new_normalize(orientation) * body.rotation().inverse();
+        let desired = limit(error.scaled_axis() * 4.0, craft.max_spin.min(1.4));
+        // Use world-space inertia so the motor turns different hulls at the same rate without setting their pose.
+        let torque =
+            body.mass_properties().effective_angular_inertia() * ((desired - body.angvel()) * 0.5);
+        body.apply_impulse(impulse, true);
+        body.apply_torque_impulse(torque, true);
+        cap_velocities(body, craft.max_spin)
+    }
+
     fn wake(&mut self, id: i64) -> Result<()> {
         let craft = self
             .crafts

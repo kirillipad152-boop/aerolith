@@ -19,7 +19,8 @@
     "ServerLevelPlotMixin"
   ],
   "client": [
-    "LevelRendererMeshMixin"
+    "LevelRendererMeshMixin",
+    "TowStaffMouseMixin"
   ],
   "injectors": {
     "defaultRequire": 1

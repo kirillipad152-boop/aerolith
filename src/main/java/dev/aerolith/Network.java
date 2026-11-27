@@ -7,8 +7,9 @@ public final class Network {
     private Network() {}
 
     public static void register(RegisterPayloadHandlersEvent event) {
-        var registrar = event.registrar("7");
+        var registrar = event.registrar("8");
         CraftClick.register(registrar);
+        TowStaffInput.register(registrar);
         CraftPush.register(registrar);
         CraftCrack.register(registrar);
         PlotSync.register(registrar);
