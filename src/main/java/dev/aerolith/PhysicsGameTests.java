@@ -70,6 +70,79 @@ public final class PhysicsGameTests {
         }).thenSucceed();
     }
 
+    /** A raft with redstone on it can be made into a craft and back: the wires, the lever and the lamp survive both ways. */
+    @GameTest(template = "test_pad", batch = "aerolith_redstone", timeoutTicks = 300)
+    public static void raftWithRedstoneAssemblesAndDocksBack(GameTestHelper test) {
+        ServerLevel level = test.getLevel();
+        ServerPlayer player = player(level);
+        for (int x = 1; x <= 10; x++) for (int z = 1; z <= 10; z++) test.setBlock(x, 1, z, Blocks.STONE);
+        for (int x = 2; x <= 7; x++) for (int z = 2; z <= 7; z++) test.setBlock(x, 2, z, Blocks.OAK_PLANKS);
+        for (int x = 3; x <= 6; x++) test.setBlock(x, 3, 4, Blocks.REDSTONE_WIRE);
+        test.setBlock(2, 3, 4, Blocks.LEVER.defaultBlockState().setValue(net.minecraft.world.level.block.LeverBlock.FACE,
+                net.minecraft.world.level.block.state.properties.AttachFace.FLOOR));
+        test.setBlock(7, 3, 4, Blocks.REDSTONE_LAMP);
+        CraftEntity craft = StructureTransfer.assemble(level, player, test.absolutePos(new BlockPos(2, 2, 2)), test.absolutePos(new BlockPos(7, 3, 7)));
+        test.assertTrue(craft != null, "A raft with redstone dust on it was not assembled");
+        test.assertTrue(craft.cells().values().stream().filter(s -> s.is(Blocks.REDSTONE_WIRE)).count() == 4, "The redstone dust did not come along");
+        test.startSequence().thenWaitUntil(() -> test.assertTrue(craft.speed() < 0.2 && craft.spin() < 0.2, "The raft has not come to rest")).thenExecute(() -> {
+            test.assertTrue(StructureTransfer.dock(level, player, craft), "A raft with redstone on it was not turned back into blocks");
+            long wires = 0, levers = 0, lamps = 0;
+            for (BlockPos pos : BlockPos.betweenClosed(test.absolutePos(new BlockPos(0, 0, 0)), test.absolutePos(new BlockPos(11, 6, 11)))) {
+                var state = level.getBlockState(pos);
+                if (state.is(Blocks.REDSTONE_WIRE)) wires++;
+                if (state.is(Blocks.LEVER)) levers++;
+                if (state.is(Blocks.REDSTONE_LAMP)) lamps++;
+            }
+            test.assertTrue(wires == 4 && levers == 1 && lamps == 1, "Redstone was lost on the way back: " + wires + " wires, " + levers + " levers, " + lamps + " lamps");
+        }).thenSucceed();
+    }
+
+    /**
+     * Redstone on a craft must not cost a rebuild of its hull: dust, levers and torches have no collision, and a change of
+     * their power changes nothing the physics holds. A block with a collision shape still does.
+     */
+    @GameTest(template = "test_pad", batch = "aerolith_redstone", timeoutTicks = 300)
+    public static void redstoneOnACraftDoesNotRebuildItsHull(GameTestHelper test) {
+        ServerLevel level = test.getLevel();
+        ServerPlayer player = player(level);
+        for (int x = 1; x <= 10; x++) for (int z = 1; z <= 10; z++) test.setBlock(x, 1, z, Blocks.STONE);
+        for (int x = 2; x <= 7; x++) for (int z = 2; z <= 7; z++) test.setBlock(x, 2, z, Blocks.OAK_PLANKS);
+        CraftEntity craft = StructureTransfer.assemble(level, player, test.absolutePos(new BlockPos(2, 2, 2)), test.absolutePos(new BlockPos(7, 2, 7)));
+        test.assertTrue(craft != null, "no craft");
+        Hull[] first = new Hull[1];
+        BlockPos[] wire = new BlockPos[1];
+        BlockPos[] lever = new BlockPos[1];
+        test.startSequence().thenIdle(30).thenExecute(() -> {
+            first[0] = craft.hull();
+            // Two planks side by side: the lever on one, the dust on the other, so that the dust takes the lever's power.
+            BlockPos plank = craft.cells().keySet().stream().sorted().filter(p -> craft.cells().containsKey(p.east())).skip(7).findFirst().orElseThrow();
+            wire[0] = plank.above();
+            lever[0] = plank.east().above();
+            var plot = craft.plotLevel();
+            plot.setBlock(craft.plotPos(wire[0]), Blocks.REDSTONE_WIRE.defaultBlockState(), 3);
+            plot.setBlock(craft.plotPos(lever[0]), Blocks.LEVER.defaultBlockState().setValue(net.minecraft.world.level.block.LeverBlock.FACE,
+                    net.minecraft.world.level.block.state.properties.AttachFace.FLOOR), 3);
+        }).thenIdle(3).thenExecute(() -> {
+            test.assertTrue(craft.hull() == first[0], "Placing dust and a lever rebuilt the hull");
+            test.assertTrue(craft.blocks().stream().anyMatch(b -> b.offset().equals(wire[0]) && b.state().is(Blocks.REDSTONE_WIRE))
+                    && craft.blocks().stream().anyMatch(b -> b.offset().equals(lever[0]) && b.state().is(Blocks.LEVER)),
+                    "The new redstone blocks cannot be aimed at");
+            var plot = craft.plotLevel();
+            var state = plot.getBlockState(craft.plotPos(lever[0]));
+            ((net.minecraft.world.level.block.LeverBlock) Blocks.LEVER).pull(state, plot, craft.plotPos(lever[0]), null);
+        }).thenIdle(3).thenExecute(() -> {
+            test.assertTrue(craft.hull() == first[0], "Throwing a lever rebuilt the hull");
+            test.assertTrue(craft.plotLevel().getBlockState(craft.plotPos(wire[0])).is(Blocks.REDSTONE_WIRE)
+                    && craft.plotLevel().getBlockState(craft.plotPos(wire[0])).getValue(net.minecraft.world.level.block.RedStoneWireBlock.POWER) > 0,
+                    "The dust beside the lever did not take power");
+            craft.plotLevel().setBlock(craft.plotPos(wire[0].above()), Blocks.STONE.defaultBlockState(), 3);
+        }).thenIdle(3).thenExecute(() -> {
+            test.assertTrue(craft.hull() != first[0] && craft.hull().mass > first[0].mass, "A block with a collision shape must rebuild the hull");
+            test.assertTrue(craft.blocks().stream().anyMatch(b -> b.offset().equals(wire[0].above()) && b.state().is(Blocks.STONE)), "The stone is not part of the hull");
+            craft.discard();
+        }).thenSucceed();
+    }
+
     @GameTest(template = "test_pad")
     public static void boxIndexFindsExactlyWhatAScanFinds(GameTestHelper test) {
         Random random = new Random(7);

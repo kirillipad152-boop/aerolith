@@ -1,6 +1,7 @@
 package dev.aerolith;
 
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -75,13 +76,23 @@ final class Materials {
     }
 
     /** Density for the mass of a solid block: its own if known, otherwise a middling value. */
+    /** Cached by state: a craft has a handful of different states and thousands of blocks. */
     static double massDensity(BlockState state) {
+        return signature(state).density();
+    }
+
+    private static double computeMassDensity(BlockState state) {
         double known = density(state);
         return known > 0.0 ? known : Hull.DEFAULT_DENSITY;
     }
 
     /** What can be aimed at on a block that has no collision shape. */
     static List<AABB> outline(BlockState state) {
+        Signature known = signature(state);
+        return known.boxes().isEmpty() ? known.outline() : computeOutline(state);
+    }
+
+    private static List<AABB> computeOutline(BlockState state) {
         return state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).toAabbs();
     }
 
@@ -94,8 +105,37 @@ final class Materials {
                         && b.getXsize() >= 0.002 && b.getYsize() >= 0.002 && b.getZsize() >= 0.002);
     }
 
+    /** Everything a hull takes from a block: two states with the same signature give the same hull. */
+    private record Signature(Block block, double density, List<AABB> boxes, List<AABB> outline) {}
+
+    private static final Map<BlockState, Signature> SIGNATURES = new ConcurrentHashMap<>();
+
+    private static Signature signature(BlockState state) {
+        return SIGNATURES.computeIfAbsent(state, s -> {
+            List<AABB> boxes = List.copyOf(computeBoxes(s));
+            return new Signature(s.getBlock(), computeMassDensity(s), boxes, boxes.isEmpty() ? List.copyOf(computeOutline(s)) : List.of());
+        });
+    }
+
+    /**
+     * Whether a change from {@code a} to {@code b} leaves the hull as it was: a lever thrown, a lamp lit, redstone dust
+     * that gains or loses power. Its mass, colliders, friction and the shape one aims at are the same.
+     */
+    static boolean samePhysics(BlockState a, BlockState b) {
+        return a == b || signature(a).equals(signature(b));
+    }
+
+    /** Whether the block has a collision shape: a block without one has no mass and takes part in no contact. */
+    static boolean hasCollision(BlockState state) {
+        return !signature(state).boxes().isEmpty();
+    }
+
     // Detachable blocks use shapes that depend only on their stored block state.
     static List<AABB> boxes(BlockState state) {
+        return signature(state).boxes();
+    }
+
+    private static List<AABB> computeBoxes(BlockState state) {
         // Slivers thinner than the physics engine's minimum would only be rejected there.
         return state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).toAabbs().stream()
                 .filter(b -> b.getXsize() >= 0.002 && b.getYsize() >= 0.002 && b.getZsize() >= 0.002).toList();

@@ -2,7 +2,7 @@
 
 A mod for **Minecraft Java 1.21.1**, **NeoForge 21.1.249** and **Java 21**. Java handles the world and the players, and the dynamics are computed by Rapier 3D in Rust, in double precision. Neither Sable nor Create is required; Create is supported when present (see below).
 
-The jar contains a native library for **Linux x86-64 (glibc 2.34+)**. Put it in the `mods` folder of a NeoForge profile (remove any previous Aerolith jar first). On a dedicated server both the server and the clients need the jar; the native code is only loaded where the simulation runs. For another server OS or architecture, build the jar on that platform.
+The jar contains the native library for **Linux x86-64 (glibc 2.34+)** and for **Windows x86-64 (Windows 10 or later)**. Put it in the `mods` folder of a NeoForge profile (remove any previous Aerolith jar first). On a dedicated server both the server and the clients need the jar; the native code is only loaded where the simulation runs. For macOS or an ARM machine, build the jar on that platform.
 
 Aerolith turns any structure you build into a **physics craft**: a rigid body with a mass, a centre of mass and an inertia tensor derived from its blocks. It collides with the world and with other crafts, floats on water, carries players and mobs, and is edited in place like ordinary blocks.
 
@@ -162,6 +162,8 @@ You need JDK 21 (`JAVA_HOME` must point to it) and Rust with `cargo` (the build 
 ./gradlew runGameTestServer
 cargo test --locked --manifest-path native/Cargo.toml
 ```
+
+Release jars carry the Windows library as well. On Linux or macOS build it with `pip install ziglang` and then `./gradlew build -PwindowsNatives`: the library is cross-compiled for `x86_64-pc-windows-gnu` with Zig as the linker (`tools/build_windows_native.sh`; set `AEROLITH_ZIG_PYTHON` if `ziglang` is not installed for `python3`). On Windows the ordinary build already makes it. The cross-built DLL has been checked for its JNI exports and its imports (only system DLLs and the Universal C Runtime), but it could not be run on the Linux build machine.
 
 `build` compiles and packs the native library and checks JNI from the final jar. `runGameTestServer` creates a separate test world and does not touch your normal saves. On Windows use `gradlew.bat`; building there needs the Rust MSVC toolchain and its linker.
 

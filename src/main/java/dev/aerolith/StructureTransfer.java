@@ -2,6 +2,7 @@ package dev.aerolith;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -146,6 +147,9 @@ final class StructureTransfer {
             removals.add(new Change(position, state, AIR, block.entity(), null));
             solid |= CraftEntity.solid(state);
         }
+        // What stands on other blocks (redstone dust, levers, torches) goes first. Taking a wire out tells the wires next to it,
+        // and one whose floor was already taken out would break before its turn, which would fail the whole assembly.
+        removals.sort(Comparator.comparingInt(change -> Materials.hasCollision(change.before()) ? 1 : 0));
         if (blocks.isEmpty() || !solid) {
             AssemblerItem.message(player, "empty");
             return null;
@@ -247,6 +251,8 @@ final class StructureTransfer {
             }
             placements.add(new Change(pos, prior, restored, null, Plots.capture(plot, craft.plotPos(cell.getKey()), cell.getKey()).entity()));
         }
+        // The other way round: a wire put down before its floor would break when it tells its neighbours.
+        placements.sort(Comparator.comparingInt(change -> Materials.hasCollision(change.after()) ? 0 : 1));
         boolean placed;
         docking = true;
         try {
