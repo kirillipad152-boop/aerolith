@@ -12,8 +12,9 @@ if ! "$python" -m ziglang version >/dev/null 2>&1; then
     exit 1
 fi
 export AEROLITH_ZIG_PYTHON="$python"
-if command -v rustup >/dev/null 2>&1; then rustup target add x86_64-pc-windows-gnu >/dev/null 2>&1 || true; fi
+if command -v rustup >/dev/null 2>&1; then rustup target add x86_64-pc-windows-gnu; fi
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="$here/windows/zig-cc"
-export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-C dlltool=$here/windows/zig-dlltool"
+# Let rustc find dlltool on PATH; Cargo's string-valued rustflags split paths containing spaces.
+export PATH="$here/windows:$PATH"
 cd "$native"
 exec cargo build --locked --release --lib --target x86_64-pc-windows-gnu --target-dir "$target"
