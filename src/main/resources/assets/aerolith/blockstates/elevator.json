@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "normal=y": {
+      "model": "aerolith:block/elevator"
+    },
+    "normal=x": {
+      "model": "aerolith:block/elevator_upright"
+    }
+  }
+}

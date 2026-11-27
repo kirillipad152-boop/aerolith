@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "normal=y": {
+      "model": "aerolith:block/rudder"
+    },
+    "normal=x": {
+      "model": "aerolith:block/rudder_upright"
+    }
+  }
+}

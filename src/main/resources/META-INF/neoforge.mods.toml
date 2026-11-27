@@ -1,0 +1,26 @@
+modLoader="javafml"
+loaderVersion="[2,)"
+license="All Rights Reserved"
+
+[[mods]]
+modId="aerolith"
+version="${modVersion}"
+displayName="Aerolith"
+description="Native rigid-body physics for Minecraft."
+
+[[dependencies.aerolith]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="BOTH"
+
+[[dependencies.aerolith]]
+modId="neoforge"
+type="required"
+versionRange="[${neoVersion},)"
+ordering="NONE"
+side="BOTH"
+
+[[mixins]]
+config="aerolith.mixins.json"

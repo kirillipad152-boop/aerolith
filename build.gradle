@@ -1,0 +1,100 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.141'
+}
+
+group = 'dev.aerolith'
+version = '0.3.0'
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+def neoVersion = '21.1.249'
+neoForge {
+    version = neoVersion
+
+    runs {
+        client { client() }
+        server {
+            server()
+            programArgument '--nogui'
+        }
+        gameTestServer { type = 'gameTestServer' }
+        // Create's own packets cannot reach the mock players of the other tests, so its tests run alone.
+        createGameTestServer {
+            type = 'gameTestServer'
+            gameDirectory = project.file('run/createGameTestServer')
+        }
+        configureEach {
+            gameDirectory = project.file("run/$name")
+            systemProperty 'neoforge.enabledGameTestNamespaces', name == 'createGameTestServer' ? 'aerolith_create' : 'aerolith'
+        }
+    }
+
+    mods {
+        aerolith { sourceSet sourceSets.main }
+    }
+}
+
+repositories {
+    // Create is only compiled against: it is not needed, and not required, to run Aerolith.
+    maven {
+        url = 'https://maven.createmod.net'
+        content { includeGroup 'com.simibubi.create'; includeGroup 'net.createmod.ponder'; includeGroup 'dev.engine-room.flywheel' }
+    }
+}
+
+dependencies {
+    compileOnly 'com.simibubi.create:create-1.21.1:6.0.10-281:slim'
+    compileOnly 'net.createmod.ponder:ponder-neoforge:1.0.85+mc1.21.1'
+    compileOnly 'dev.engine-room.flywheel:flywheel-neoforge-api-1.21.1:1.0.6'
+}
+
+def osName = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+def archName = System.getProperty('os.arch').toLowerCase(Locale.ROOT)
+def os = osName.startsWith('linux') ? 'linux' :
+         osName.startsWith('mac') ? 'macos' :
+         osName.startsWith('windows') ? 'windows' : null
+def arch = [amd64: 'x86_64', x86_64: 'x86_64', arm64: 'aarch64', aarch64: 'aarch64'][archName]
+def rustAbi = [linux: 'unknown-linux-gnu', macos: 'apple-darwin', windows: 'pc-windows-msvc'][os]
+if (rustAbi == null || arch == null) {
+    throw new GradleException("Aerolith cannot build natives for $osName / $archName. Use a 64-bit x86 or ARM JDK on Linux (glibc), macOS, or Windows (MSVC).")
+}
+
+def rustTarget = "$arch-$rustAbi"
+def nativeSources = layout.projectDirectory.dir('native')
+def cargoDirectory = layout.buildDirectory.dir('cargo')
+def libraryName = System.mapLibraryName('aerolith_physics')
+def nativeLibrary = cargoDirectory.map { it.file("$rustTarget/release/$libraryName") }
+
+def cargoBuild = tasks.register('cargoBuild', Exec) {
+    workingDir nativeSources.asFile
+    commandLine 'cargo', 'build', '--locked', '--release', '--lib',
+            '--target', rustTarget, '--target-dir', cargoDirectory.get().asFile.absolutePath
+    // shortcut: tracks native source changes, not toolchain changes; run clean after switching toolchains.
+    inputs.files(fileTree(nativeSources) { exclude '**/target/**', '**/build/**' })
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.file(nativeLibrary)
+    doLast {
+        if (!nativeLibrary.get().asFile.isFile()) {
+            throw new GradleException("Cargo did not produce $libraryName. Check that native/Cargo.toml declares the aerolith_physics cdylib.")
+        }
+    }
+}
+
+tasks.named('processResources', ProcessResources) {
+    from(cargoBuild) { into "natives/$os-$arch" }
+    def metadata = [modVersion: project.version, neoVersion: neoVersion]
+    inputs.properties metadata
+    filesMatching('META-INF/neoforge.mods.toml') { expand metadata }
+}
+
+tasks.named('test', Test) {
+    exclude 'dev/aerolith/NativeSmoke.class'
+}
+
+def nativeSmoke = tasks.register('nativeSmoke', JavaExec) {
+    mainClass = 'dev.aerolith.NativeSmoke'
+    classpath(sourceSets.test.output, tasks.named('jar', Jar))
+    jvmArgs '-Xcheck:jni'
+}
+
+tasks.named('check') { dependsOn nativeSmoke }

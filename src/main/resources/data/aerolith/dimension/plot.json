@@ -1,0 +1,13 @@
+{
+  "type": "aerolith:plot",
+  "generator": {
+    "type": "minecraft:flat",
+    "settings": {
+      "biome": "minecraft:the_void",
+      "features": false,
+      "lakes": false,
+      "structure_overrides": [],
+      "layers": []
+    }
+  }
+}

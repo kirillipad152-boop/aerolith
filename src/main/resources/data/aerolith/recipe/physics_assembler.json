@@ -1,0 +1,27 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "building",
+  "pattern": [
+    "IAI",
+    "CPC",
+    "III"
+  ],
+  "key": {
+    "I": {
+      "item": "minecraft:iron_ingot"
+    },
+    "A": {
+      "item": "minecraft:amethyst_block"
+    },
+    "C": {
+      "item": "minecraft:copper_ingot"
+    },
+    "P": {
+      "item": "minecraft:piston"
+    }
+  },
+  "result": {
+    "id": "aerolith:physics_assembler",
+    "count": 1
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "normal=y": {
+      "model": "aerolith:block/flap"
+    },
+    "normal=x": {
+      "model": "aerolith:block/flap_upright"
+    }
+  }
+}

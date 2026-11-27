@@ -1,0 +1,9 @@
+{
+  "multipart": [
+    {
+      "apply": {
+        "model": "aerolith:block/physics_assembler"
+      }
+    }
+  ]
+}

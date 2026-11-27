@@ -1,0 +1,27 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.aerolith.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "DistanceManagerPlotMixin",
+    "EntityCollisionMixin",
+    "EntityFluidMixin",
+    "FlowingFluidMixin",
+    "LevelChunkPlotMixin",
+    "LightEngineAccess",
+    "PlayerCollisionMixin",
+    "PlayerMovementPacketMixin",
+    "PlotOpenersMixin",
+    "PlayerReachMixin",
+    "ServerChunkCachePlotMixin",
+    "ServerLevelAccess",
+    "ServerLevelPlotMixin"
+  ],
+  "client": [
+    "LevelRendererMeshMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
