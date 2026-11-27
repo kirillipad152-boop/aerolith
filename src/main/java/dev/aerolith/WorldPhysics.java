@@ -157,7 +157,6 @@ public final class WorldPhysics {
             Hull.Colliders geometry = hull.colliders(materials);
             body.id = NativePhysics.addBody(world, craft.nativeState(), geometry.boxes(), geometry.frictionCells(), hull.masses(), hull.surfaces);
             bodies.put(body.id, body);
-            craft.controlsSent = false;
             body.asleep = false;
             body.active = !craft.anchored();
             if (!body.active) NativePhysics.setActive(world, body.id, false);
@@ -325,7 +324,6 @@ public final class WorldPhysics {
                 }
             }
             if (body.id != 0 && body.active) {
-                craft.applyPilot(world, body.id);
                 craft.loads.apply(craft, world, body.id, body.asleep);
                 craft.applyPushes(world, body.id);
                 craft.propulsion.apply(craft, world, body.id, now);

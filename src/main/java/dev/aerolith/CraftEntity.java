@@ -66,13 +66,6 @@ public final class CraftEntity extends Entity {
     private boolean anchored;
     private Vec3 lerpTarget = Vec3.ZERO;
     private int lerpTicks;
-    private long inputAt = Long.MIN_VALUE;
-    private int pilotInput;
-    private double throttle;
-    private int displayedThrottle = -1;
-    /** How far the flaps are down, 0 to 1. Stays where the pilot left it. */
-    private double flaps;
-    private int displayedFlaps = -1;
 
     // The blocks live in the plot dimension. This is a copy of what is there, offset -> state, kept current from block
     // changes on the server and from packets on the client; the hull is derived from it.
@@ -363,7 +356,6 @@ public final class CraftEntity extends Entity {
         motion[9] = velocity.z;
         hull = next;
         reapplyPosition();
-        if (hull.seat == null) ejectPassengers();
         if (level() instanceof ServerLevel server) WorldPhysics.of(server).rebuild(this);
     }
 
@@ -486,10 +478,6 @@ public final class CraftEntity extends Entity {
                 : new Quaternionf(entityData.get(ROTATION));
     }
 
-    boolean isControlledBy(Player player) {
-        return getFirstPassenger() == player;
-    }
-
     boolean canEdit(Player player) {
         return player.getUUID().equals(owner) || player.hasPermissions(2);
     }
@@ -567,32 +555,6 @@ public final class CraftEntity extends Entity {
     @Override public boolean canChangeDimensions(Level from, Level to) { return false; }
     @Override public boolean shouldRenderAtSqrDistance(double distanceSq) { return distanceSq < 160.0 * 160.0; }
 
-    @Override
-    protected boolean canAddPassenger(Entity rider) {
-        return rider instanceof Player && hull != null && hull.seat != null && super.canAddPassenger(rider);
-    }
-
-    @Override
-    protected Vec3 getPassengerAttachmentPoint(Entity passenger, EntityDimensions dimensions, float partialTick) {
-        return hull == null || hull.seat == null ? super.getPassengerAttachmentPoint(passenger, dimensions, partialTick)
-                : Hull.rotate(orientation(partialTick), hull.seat);
-    }
-
-    @Override
-    public Vec3 getDismountLocationForPassenger(LivingEntity passenger) {
-        AABB box = getBoundingBox();
-        for (Vec3 p : List.of(new Vec3(box.minX - 0.4, passenger.getY(), passenger.getZ()),
-                new Vec3(box.maxX + 0.4, passenger.getY(), passenger.getZ()),
-                new Vec3(passenger.getX(), passenger.getY(), box.minZ - 0.4),
-                new Vec3(passenger.getX(), passenger.getY(), box.maxZ + 0.4))) {
-            if (level() instanceof ServerLevel server && WorldPhysics.chunkLoaded(server, BlockPos.containing(p))
-                    && level().noCollision(passenger, passenger.getBoundingBox().move(p.subtract(passenger.position())))) {
-                return p;
-            }
-        }
-        return super.getDismountLocationForPassenger(passenger);
-    }
-
     /** A left click removes the block under the crosshair instead of damaging the craft. */
     @Override
     public boolean skipAttackInteraction(Entity attacker) {
@@ -638,78 +600,7 @@ public final class CraftEntity extends Entity {
         if (player.isSecondaryUseActive()) {
             return InteractionResult.PASS;
         }
-        if (hull == null || hull.seat == null) {
-            AssemblerItem.message(pilot, "no_cockpit");
-        } else if (isVehicle() || player.isPassenger()) {
-            AssemblerItem.message(pilot, "occupied");
-        } else if (player.startRiding(this)) {
-            displayedThrottle = -1;
-            displayedFlaps = -1;
-            pilot.sendSystemMessage(Component.translatable("message.aerolith.pilot"));
-            if (!hull.powered) {
-                pilot.sendSystemMessage(Component.translatable("message.aerolith.thrustless"));
-            }
-        }
-        return InteractionResult.CONSUME;
-    }
-
-    void acceptPilotInput(ServerPlayer pilot, int mask) {
-        long now = level().getGameTime();
-        if (isControlledBy(pilot) && mask >= 0 && (mask & ~PilotInput.VALID_BITS) == 0 && now != inputAt) {
-            pilotInput = mask;
-            inputAt = now;
-        }
-    }
-
-    double throttle() {
-        return throttle;
-    }
-
-    /** Set to false when the engine has a new body for this craft, which knows no controls. */
-    boolean controlsSent;
-    private double sentThrottle, sentPitch, sentYaw, sentRoll, sentFlaps;
-
-    void applyPilot(long world, long body) {
-        double pitch = 0, yaw = 0, roll = 0;
-        if (getFirstPassenger() instanceof ServerPlayer pilot) {
-            int bits = inputAt != Long.MIN_VALUE && level().getGameTime() - inputAt <= 6 ? pilotInput : 0;
-            double change = key(bits, PilotInput.THROTTLE_UP) - key(bits, PilotInput.THROTTLE_DOWN);
-            throttle = hull.powered ? Mth.clamp(throttle + change * 0.02, 0.0, 1.0) : 0.0;
-            pitch = key(bits, PilotInput.BACK) - key(bits, PilotInput.FORWARD);
-            // Facing +Z, the pilot's right is -X; positive rotation about +Y turns toward +X.
-            yaw = key(bits, PilotInput.LEFT) - key(bits, PilotInput.RIGHT);
-            // Rolling to the right lowers the right wing: a turn about +Z, as the pilot looks along it.
-            roll = key(bits, PilotInput.ROLL_RIGHT) - key(bits, PilotInput.ROLL_LEFT);
-            flaps = Mth.clamp(flaps + (key(bits, PilotInput.FLAPS_DOWN) - key(bits, PilotInput.FLAPS_UP)) * 0.02, 0.0, 1.0);
-            int flapPercent = (int) Math.round(flaps * 100.0);
-            if (flapPercent != displayedFlaps && (displayedFlaps != -1 || flapPercent != 0)) {
-                AssemblerItem.message(pilot, "flaps", flapPercent);
-                displayedFlaps = flapPercent;
-            }
-            int percent = (int) Math.round(throttle * 100.0);
-            if (percent != displayedThrottle && (displayedThrottle != -1 || percent != 0)) {
-                AssemblerItem.message(pilot, "throttle", percent);
-                displayedThrottle = percent;
-            }
-        } else {
-            inputAt = Long.MIN_VALUE;
-            pilotInput = 0;
-            throttle = 0;
-        }
-        if (controlsSent && throttle == sentThrottle && pitch == sentPitch && yaw == sentYaw && roll == sentRoll && flaps == sentFlaps) return;
-        NativePhysics.setThrottle(world, body, throttle);
-        NativePhysics.setControls(world, body, pitch, yaw, roll);
-        NativePhysics.setFlaps(world, body, flaps);
-        controlsSent = true;
-        sentThrottle = throttle;
-        sentPitch = pitch;
-        sentYaw = yaw;
-        sentRoll = roll;
-        sentFlaps = flaps;
-    }
-
-    private static int key(int mask, int bit) {
-        return (mask & bit) == 0 ? 0 : 1;
+        return InteractionResult.PASS;
     }
 
     double[] nativeState() {

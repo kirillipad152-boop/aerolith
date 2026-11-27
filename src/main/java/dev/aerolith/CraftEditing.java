@@ -276,7 +276,7 @@ final class CraftEditing {
 
     /**
      * A right click on a block of the craft, as the game handles one on a block of the world: the block's own use, then
-     * the item's. Returns PASS when nothing took the click, so that the craft's seat can.
+     * the item's. Returns PASS when nothing took the click, so.
      */
     static InteractionResult use(ServerPlayer player, CraftEntity craft, InteractionHand hand, Target chosen) {
         ServerLevel plot = craft.plotLevel();
@@ -401,7 +401,7 @@ final class CraftEditing {
             return;
         }
         List<CraftBlock> main = solid.stream()
-                .max(Comparator.comparingInt((List<CraftBlock> g) -> hasSeat(g) ? 1000 : 0).thenComparingInt(List::size)).orElseThrow();
+                .max(Comparator.comparingInt(List::size)).orElseThrow();
         if (groups.size() > 1) {
             Map<List<CraftBlock>, List<CraftBlock>> water = assignFluids(groups, craft.cellBlocks(true));
             for (List<CraftBlock> group : groups) {
@@ -426,10 +426,6 @@ final class CraftEditing {
 
     private static boolean hasSolid(List<CraftBlock> group) {
         return group.stream().anyMatch(block -> CraftEntity.solid(block.state()));
-    }
-
-    private static boolean hasSeat(List<CraftBlock> group) {
-        return group.stream().anyMatch(b -> b.state().is(AerolithParts.SEAT.get()) || b.state().is(net.minecraft.world.level.block.Blocks.RED_WOOL));
     }
 
     /** Each fluid cell goes with the group it can be reached from through fluid, so a pool stays with its basin. */

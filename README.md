@@ -1,76 +1,77 @@
-# Aerolith 0.3
+# Aerolith 0.4
 
-Игровой мод для **Minecraft Java 1.21.1**, **NeoForge 21.1.249** и **Java 21**. Java отвечает за взаимодействие с миром и игроками, а динамику считает Rapier 3D в Rust с двойной точностью. Sable и Create не нужны.
+A mod for **Minecraft Java 1.21.1**, **NeoForge 21.1.249** and **Java 21**. Java handles the world and the players, and the dynamics are computed by Rapier 3D in Rust, in double precision. Neither Sable nor Create is required; Create is supported when present (see below).
 
-Сборка `build/libs/aerolith-0.3.0.jar` содержит нативную библиотеку для **Linux x86-64 (glibc 2.34+)**. Установите JAR в `mods` профиля NeoForge, убрав предыдущий JAR Aerolith из этой папки. На выделенном сервере JAR нужен и серверу, и клиентам; нативный код загружается только там, где выполняется симуляция. Для другой серверной ОС или архитектуры соберите JAR на этой платформе.
+The jar contains a native library for **Linux x86-64 (glibc 2.34+)**. Put it in the `mods` folder of a NeoForge profile (remove any previous Aerolith jar first). On a dedicated server both the server and the clients need the jar; the native code is only loaded where the simulation runs. For another server OS or architecture, build the jar on that platform.
 
-## Первый полёт
+Aerolith turns any structure you build into a **physics craft**: a rigid body with a mass, a centre of mass and an inertia tensor derived from its blocks. It collides with the world and with other crafts, floats on water, carries players and mobs, and is edited in place like ordinary blocks.
 
-1. Сделайте **сборщик аппаратов**: положите в горизонтальный ряд верстака осколок аметиста, медный слиток и палку. В творческом режиме инструмент есть во вкладке «Инструменты и приспособления».
-2. На открытой площадке поставьте **двигатель** на землю, затем **кресло пилота** на двигатель. Обе детали доступны в книге рецептов и в творческом инвентаре. При размещении двигатель даёт тягу в сторону грани, по которой вы щёлкнули (на верхней грани — вверх). Над креслом нужно два блока воздуха. Земля под двигателем не входит в выделение. Старый вариант с оранжевой и красной шерстью тоже работает.
-3. С инструментом в руке нажмите **ПКМ** по двигателю, затем **Shift+ПКМ** по креслу. Два блока станут одним физическим телом. **ПКМ** по аппарату посадит вас в кресло.
-4. **Z / X** — увеличить / уменьшить тягу. Для аппарата из этих двух деталей начните с **35–40%**, а затем убавьте тягу для посадки. **W / S** — опустить / поднять нос, **A / D** — поворот, **Shift** — выйти. Управление ориентируется на аппарат, не на направление взгляда. Нос изначально смотрит в сторону `+Z`; можно включить вид от третьего лица (`F5`).
-5. После остановки выйдите и нажмите **Shift+ПКМ** сборщиком по аппарату. Он выровняется по ближайшему прямому направлению и снова станет обычными блоками, если все места свободны. Это действие не перезаписывает препятствия.
+## Getting started
 
-### Из чего строить
+1. Make a **Craft Assembler**: put an amethyst shard, a copper ingot and a stick in a vertical column of the crafting grid (shard on top). In creative mode it is in the *Tools & Utilities* tab.
+2. Build something on open ground.
+3. With the assembler in hand, **use** it on one corner of the structure, then **sneak-use** it on the opposite corner. Every block in the box becomes one physics craft. Open water in the box stays in the world, and so does the ground the structure stands on if you leave it out of the box.
+4. When it has come to rest, **sneak-use** the assembler on the craft to turn it back into ordinary blocks. The craft is aligned to the nearest straight direction first, and the action refuses to overwrite anything in the way.
 
-| Блок | Назначение |
+### The Physics Assembler (survival)
+
+The **Physics Assembler** block (crafted from iron ingots, an amethyst block, copper ingots and a piston) is the survival way to make a craft. Use it to turn the structure it is part of into a craft: every block that touches it, and the blocks touching those, within its range. Sneak-use it with an empty hand to cycle the range (1, 2, 4, 8, 16, 32 or 50 blocks on each axis from itself; 50 is a cube of just over a million blocks). Used again once it is part of a craft, it turns the craft back into blocks.
+
+A craft holds up to **1,000,000 blocks** and spans up to 255 blocks on each axis. At most 16,384 crafts are loaded per dimension. These are limits on size and count, not a promise of 20 TPS at full load.
+
+### What to build from
+
+Any block with a collision shape can be part of a craft. Density comes from the material, so a craft's mass is the sum of its blocks' volumes times their densities, not the item weight from the game:
+
+| Material | Density (kg/m³) |
 |---|---|
-| Кресло пилота | Посадка и управление без красной шерсти |
-| Двигатель | До 10 000 Н по одной из шести граней; сопло сзади должно быть свободно |
-| Крыло | Тонкая пластина с физическим коллайдером, площадь 1 м², хорда по `+Z` |
-| Красная шерсть | Кресло пилота; над ним требуется свободное место |
-| Оранжевая шерсть | До 9 000 Н тяги по локальной `+Y`; выпуск вниз должен быть свободен |
-| Лаймовая глазурованная керамика | До 11 000 Н в сторону её свойства `facing`; выпуск с противоположной стороны |
-| Голубая шерсть | Крыло с хордой вдоль локальной `+Z` |
-| Жёлтая шерсть | Вертикальная поверхность с хордой вдоль `+Z`, противодействует скольжению |
-| Доски, брёвна, сухие плиты и ступени, цветное стекло, терракота, бетон, камень и металлы | Корпус и балласт |
+| Wool | 55 |
+| Planks, bamboo mosaic | 480 |
+| Logs | 650 |
+| Dirt, clay, bricks | 1,350 to 1,950 |
+| Stone, concrete, terracotta, glass | 1,900 to 2,750 |
+| Copper | 8,960 |
+| Iron / gold | 7,870 / 19,300 |
+| Anything else | 800 |
 
-### Правка собранного аппарата на ходу
+Slabs, stairs, fences, carpets and every other shape collide with their real `VoxelShape`, not a full cube. Uniform blocks of a hull are merged into large collider boxes of the same mass so that bodies do not catch on the seams between blocks.
 
-Аппарат не обязательно возвращать в блоки. Блок, на который смотрит прицел, подсвечивается рамкой в системе координат аппарата, даже если он повёрнут.
+### Editing an assembled craft in motion
 
-- **Прицел** работает по настоящим формам блоков судна, а не по его ограничивающему боксу. Можно ломать судно внутри кольца другого судна, а за «дырами» наклонённого корпуса остаётся доступен мир.
-- **Средняя кнопка** на блоке судна выбирает такой же блок, как в ванили: в творческом режиме выдаёт его, в выживании берёт из инвентаря.
-- **Отладочный вид** (F3+B): белым показаны точные формы блоков, голубым — коллайдеры, которые получает физика, жёлтым кубиком и тремя осями — центр масс. Оси выходят за корпус, чтобы их было видно сквозь блоки.
-- Клиент сообщает серверу, какой блок и какую грань он видел, а сервер принимает это, если блок существует и в пределах досягаемости. Поэтому клики не пропадают, пока судно движется и клиент показывает его с задержкой в несколько тиков.
-- **Левый клик** ломает блок. В **творческом режиме** — сразу (при удержании каждые 5 тиков), без дропа. В **выживании** держите кнопку: трещины следуют за блоком, от удара и при сломе летят частицы. Время зависит от прочности блока и инструмента, инструмент изнашивается, дроп зависит от пригодности инструмента. **Удар отталкивает судно** по направлению взгляда в точке попадания.
-- **Правый клик блоком в руке** ставит его в соседнюю клетку со стороны грани, на которую вы смотрите. Плиты и ступени встают верхней или нижней половиной в зависимости от точки прицеливания; двигатель направлен в сторону грани. При первой установке в новый чанк аппарата клиент создаёт его сразу: перезаходить, чтобы увидеть блок, не нужно.
-- Если после слома часть аппарата теряет связь с главной, она отделяется и становится **самостоятельным аппаратом** с той же скоростью и вращением. Главным остаётся кусок с креслом, иначе самый большой. Когда свободных мест в измерении нет, лишние куски выпадают предметами.
-- Ломать, ставить и пользоваться блоками может владелец или оператор. Ставить можно любой блок, какой разрешает игра. Аппарат занимает до 255 блоков по каждой оси и до 32 768 блоков всего. Место не должно быть занято террейном, живым существом или другим аппаратом; обычный блок нельзя поставить внутрь аппарата.
-- Если убрать кресло, пассажир выходит.
+A craft does not have to be turned back into blocks to change it. The block under the crosshair is outlined in the craft's own frame, even when the craft is rotated.
 
-### Игроки на борту
+- **Aiming** works on the real shapes of the craft's blocks, not on its bounding box. You can break blocks of a craft inside another craft's ring, and the world stays reachable through the holes of a tilted hull.
+- **Middle click** on a craft block picks that block like in vanilla: it gives you the block in creative mode and takes it from your inventory in survival.
+- **Debug view** (F3+B): white shows the exact block shapes, light blue the colliders the physics receives, and a yellow cube with three axes the centre of mass. The axes extend past the hull so they are visible through blocks.
+- The client tells the server which block and face it saw, and the server accepts that if the block exists and is within reach. Clicks therefore are not lost while the craft moves and the client draws it a few ticks late.
+- **Left click** breaks a block. In **creative** mode it breaks at once (every 5 ticks while held), with no drop. In **survival** hold the button: cracks follow the block, and particles fly when it is hit and when it breaks. The time depends on the block's hardness and your tool, the tool wears, and the drop follows normal harvest rules. **A hit pushes the craft** along your view direction at the point of impact.
+- **Right click with a block in hand** places it in the neighbouring cell on the face you aim at. Slabs and stairs take the top or bottom half from the aim point. The first time a block goes into a new chunk of a craft, the client creates that chunk immediately, so you need not rejoin to see it.
+- If breaking a block disconnects part of a craft, that part becomes a **craft of its own** with the same velocity and spin. The largest piece stays the main craft. When the dimension has no free cells left, the extra pieces fall apart into item drops.
+- The owner or an operator can break, place and use blocks. Any block the game allows can be placed, but not into terrain, a living entity or another craft, and an ordinary world block cannot be placed inside a craft.
 
-Стоящие на палубе игроки и мобы давят на аппарат своим весом: 70 кг для игрока, остальным масса оценивается по размеру. Нагрузка приложена в точке под ногами, поэтому у края лёгкий аппарат кренится. Ускорение шагов относительно палубы возвращается аппарату обратным импульсом: на льду лёгкий аппарат откатывается назад, когда вы идёте вперёд. Прыжки и посадки пока не передают отдельный импульс.
+### Players and mobs on board
 
-Если упереться в борт, судно **толкается**: усилие — до 0,8 веса игрока, в точке касания. Лёгкое судно на льду поедет, тяжёлое на земле нет. Мобы толкают так же. Сборка и установка блока отказываются перекрывать другое судно, иначе физика выбросила бы оба.
+A player standing on a deck presses on the craft with their weight (70 kg for a player; for mobs the mass is estimated from their size). The load acts at the point under their feet, so a light craft tips at its edge. The acceleration of footsteps relative to the deck returns to the craft as an opposite impulse: on ice a light craft rolls back when you walk forward. Jumps and landings do not yet transfer a separate impulse.
 
-По наклонным палубам идёт вдоль поверхности без потери скорости (до ~60°), на низкие уступы (до 0,6 м) поднимается, а стоя на склоне не сползает. При спуске игрок «прилипает» к поверхности. Блоки не отскакивают при падении (упругость только у слизи); решатель настроен так, что при ударе на 70 м/с остаточный отскок меньше 0,5 м/с. Если физика останавливается из-за ошибки, она перезапускается до пяти раз (операторам приходит сообщение), аппараты и их блоки при этом не теряются. Однородные блоки корпуса сливаются в крупные боксы коллайдеров с той же массой, чтобы тела не цеплялись за швы между блоками.
+If you press into the side of a craft, the craft is **pushed**: up to 0.8 of the player's weight, at the contact point. A light craft on ice moves; a heavy one on the ground does not. Mobs push the same way. Assembling or placing a block refuses to overlap another craft, because the physics would throw both out.
 
-Ходьба по палубе рассчитывается клиентом. Сервер отклоняет шаг, только если он заканчивается глубоко (более 0,2 м) внутри корпуса, поэтому покой на палубе не вызывает откатов.
+On slanted decks you walk along the surface without losing speed (up to about 60°), step up low ledges (up to 0.6 m), and do not slide down a slope while standing. Going down you stay attached to the surface. Blocks do not bounce when they fall (only slime is elastic); the solver is tuned so that after a 70 m/s impact the residual bounce is under 0.5 m/s. If the physics stops because of an error it restarts up to five times (operators get a message) without losing crafts or their blocks.
 
-### Тяговый посох (творческий режим)
+Walking on a deck is computed by the client. The server rejects a step only if it ends deeply (more than 0.2 m) inside the hull, so standing on a deck causes no rollbacks.
 
-Возьмите **Тяговый посох** из вкладки «Инструменты и приспособления» или командой `/give @s aerolith:tow_staff`. Снаружи наведитесь на свой аппарат, **зажмите ПКМ** посохом в основной руке и ведите аппарат взглядом. **Отпустите ПКМ** или уберите посох, чтобы отпустить аппарат. Посох не работает в выживании, с занятым креслом или если вы стоите на этом аппарате. Он тянет корпус через Rapier, а не телепортирует его: препятствия остаются твёрдыми, а отпущенный аппарат сохраняет скорость.
+### Tow Staff (creative)
 
-**ЛКМ** по аппарату или во время захвата закрепляет корпус в текущей позе: скорость и вращение обнуляются, коллизии остаются. Закрепление переживает перезапуск мира. **ЛКМ** ещё раз открепляет его; дальше действует обычная физика, без накопленной скорости.
+Take the **Tow Staff** from the *Tools & Utilities* tab or with `/give @s aerolith:tow_staff`. Aim at one of your crafts from outside, **hold use** with the staff in your main hand, and move the craft with your gaze. **Release use** or put the staff away to let it go. The staff does not work in survival or while you stand on that craft. It pulls the hull through the solver rather than teleporting it: obstacles stay solid, and a released craft keeps its velocity.
 
-### Рецепты деталей
+**Left click** on a craft, or while holding one, pins the hull in its current pose: velocity and spin are zeroed and collisions stay. A pin survives a world restart. **Left click** again unpins it, after which normal physics applies with no stored velocity.
 
-- **Кресло:** кожа над горизонтальным рядом из трёх досок.
-- **Двигатель:** печь в центре, железные слитки сверху и снизу, медные слитки слева и справа.
-- **Два крыла:** горизонтальный ряд из трёх досок и палка под средней доской.
+Other commands (operator): `/aerolith wind <x> <y> <z>` sets the wind speed in m/s in the current dimension until you leave the world or restart the server; `/aerolith inspect <selector>` shows mass, linear and angular velocity; `/aerolith spawn`, `/aerolith perf` and `/aerolith bench` are described under *Performance*.
 
-Крыло требует воздушного потока и угла атаки. Чтобы попробовать самолёт, начните с лёгкого корпуса, расположите крылья симметрично, добавьте двигатель вперёд и не ставьте крылья между блоками над и под ними. Камень и металл быстро увеличивают необходимую скорость взлёта. Сборка должна быть связана гранями. Максимум — **32 768 блоков в аппарате, 16 384 загруженных аппарата на измерение**. Это предел количества, а не обещание 20 TPS при полной загрузке.
+### Friction
 
-Дополнительно: `/aerolith wind <x> <y> <z>` задаёт скорость ветра в м/с в текущем измерении до выхода из мира или перезапуска сервера (для оператора); `/aerolith inspect <selector>` показывает массу, линейную и угловую скорости.
+The coefficient `mu` is dimensionless. For a contact between two physical surfaces Rapier takes the **smaller** of their coefficients, so smooth ice stays slippery even under a wool hull; `0.0` turns off contact friction (air and water drag remain). Settings affect contacts of bodies with the world and with each other, not vanilla player acceleration.
 
-### Трение
-
-Коэффициент `μ` безразмерный. Для контакта двух физических поверхностей Rapier берёт **меньший** из их коэффициентов. Поэтому гладкий лёд остаётся скользким даже для шерстяного корпуса; `0.0` отключает контактное трение (сопротивление воздуха и воды остаётся). Настройки действуют на контакты тел с миром и друг с другом, а не на ванильное ускорение игрока.
-
-Измените `config/aerolith-server.toml` или создайте одноимённый файл в `serverconfig` конкретного мира и заново откройте мир. Диапазон `0.0–3.0`. Значения `overrides` имеют приоритет над группами материала и применяются ко всем состояниям указанного блока:
+Edit `config/aerolith-server.toml`, or create a file of the same name in the world's `serverconfig`, and reopen the world. The range is `0.0` to `3.0`. `overrides` take priority over material groups and apply to every state of the named block:
 
 ```toml
 [friction]
@@ -80,132 +81,80 @@ stone = 0.70
 overrides = ["minecraft:packed_ice=0.015", "minecraft:oak_planks=0.82"]
 ```
 
-## Что считает движок
+## What the engine computes
 
-- **Единицы:** блок — метр, время — секунды, масса — кг. Гравитация `9,81 м/с²`. Масса и тензор инерции получаются из объёмов и плотностей частей; центр масс может не совпадать с визуальным центром. Плотности — оценки материалов, а не игровая масса предметов.
-- **Контакты:** мир и сборка используют `VoxelShape` блоков, включая плиты и ступени. Пустоты не заполняются общей оболочкой. У слитого коллайдера корпуса трение берётся из блока под каждой точкой контакта, а не усредняется по палубе. Разная упругость остаётся у отдельных коллайдеров. Контакт предсказывается на путь одного подшага, поэтому тело останавливается у поверхности: куб на 80 м/с входит в стену на 3 см. Точная проверка движения (CCD) включается, когда тело за подшаг проходит больше своей полутолщины. Грань, закрытая соседним боксом, контакта не даёт: корпус не цепляется за швы рельефа и палуб.
-- **Люди, мобы и дроп:** препятствия проверяются по повёрнутым формам корпуса. Можно стоять на палубе и проходить через реальные проёмы. Вес стоящего игрока или моба и реакция на его шаг передаются корпусу в точке опоры. Дроп переносится палубой, но такой нагрузки не создаёт. При очень резких поворотах перенос между тиками остаётся приближённым.
-- **Воздух:** давление зависит от квадрата относительной скорости. Закрытые грани и закрытые части граней не получают внешнюю силу. Для крыльев модель учитывает угол атаки, индуктивное сопротивление и сваливание. Это модель плоской аэродинамической поверхности, а не симуляция воздушных вихрей.
-- **Вода:** движок пересекает повёрнутые коллайдеры с заполненной частью водных клеток. Объём и центр пересечения задают силу Архимеда `ρgV` и её момент. Для вращающегося бокса сопротивление считается в нескольких точках погружённой части: вода тормозит и поворот вокруг неподвижного центра. Высота и течение берутся из Minecraft; это приближённая модель сопротивления, без волн и заполнения полостей.
-- **Тяга и управление:** сила действует в точке двигателя, поэтому нецентральная тяга вращает сборку. При включённом двигателе управление задаёт ограниченный момент, не выставляет углы напрямую; отпущенные клавиши гасят вращение, но не выравнивают аппарат. Нет моделирования топлива, потока от винта и массы пилота.
-- **Интеграция:** за игровой тик проходит `0,05 с`. Для полёта, быстрых столкновений, нагрузки и воды движок использует четыре подшага по `0,0125 с`. Если все активные тела медленно движутся на сухой опоре без дополнительной нагрузки, решатель может выполнить один контактный шаг. Спящие тела просыпаются от толчка, тяги, ветра и изменения опоры или воды. Незагруженная область и `/tick freeze` приостанавливают симуляцию. Защитные пределы — `80 м/с` для центра масс и любой точки корпуса и `30 рад/с`: большой корпус вращается медленнее, чтобы его край не превысил 80 м/с. Если активных тел 128 и больше, расчёт делится между ядрами, одно остаётся игре.
+- **Units:** a block is a metre, time is in seconds, mass in kg, gravity 9.81 m/s². Mass and the inertia tensor come from the volumes and densities of the parts, and the centre of mass need not coincide with the visual centre. Densities are estimates of the materials.
+- **Contacts:** the world and crafts use the blocks' `VoxelShape`s, including slabs and stairs. Voids are not filled by a common shell. In a merged hull collider the friction is taken from the block under each contact point and not averaged over the deck; different restitution stays with separate colliders. A contact is predicted over the path of one substep, so a body stops at a surface: a cube at 80 m/s enters a wall by 3 cm. Exact motion checking (CCD) turns on when a body travels more than its half-thickness in a substep. A face covered by a neighbouring box gives no contact, so a hull does not catch on the seams of terrain and decks.
+- **People, mobs and drops:** obstacles are tested against the rotated shapes of the hull. You can stand on a deck and walk through real openings. The weight of a standing player or mob, and the reaction to their step, are applied to the hull at the support point. A dropped item is carried by the deck but puts no such load on it. At very sharp turns the carrying between ticks stays approximate.
+- **Air:** pressure grows with the square of the relative speed. Covered faces and covered parts of faces get no external force. This is a flat-plate drag model, not a simulation of air vortices.
+- **Water:** the engine intersects the rotated colliders with the filled part of the water cells. The volume and centre of the intersection give the buoyancy force `rho*g*V` and its moment. For a rotating box the drag is computed at several points of the submerged part, so water also brakes rotation about a fixed centre. Level and current come from Minecraft; this is an approximate drag model without waves or filling of cavities.
+- **Integration:** a game tick is `0.05 s`. For fast collisions, loads and water the engine uses four substeps of `0.0125 s`. If all active bodies move slowly on dry support with no extra load, the solver may take a single contact step. Sleeping bodies wake from a push, wind, or a change of support or water. An unloaded area and `/tick freeze` pause the simulation. Safety limits are `80 m/s` for the centre of mass and for any point of the hull, and `30 rad/s`: a large hull rotates slower so its edge does not exceed 80 m/s. With 128 or more active bodies the work is split across cores, leaving one for the game.
 
-## Блоки аппарата — настоящие блоки
+## Craft blocks are real blocks
 
-Каждый аппарат хранит свои блоки как обычные блоки в отдельном измерении `aerolith:plot`: у аппарата своя ячейка, а мир внутри неё работает по ванильным правилам. Поэтому на плоту работает то, что работает в мире:
+Each craft keeps its blocks as ordinary blocks in a separate dimension, `aerolith:plot`: a craft has a cell of its own, and the world inside it follows vanilla rules. So what works in the world works on a raft:
 
-- **Сундуки, бочки, воронки, печи, верстаки, наковальни и другие меню** открываются правым кликом, предметы сохраняются в аппарате вместе с блоком. Модель сундука совпадает с рамкой прицела: она рисуется от угла блока, а не со сдвигом на полблока. Если сломать сундук, содержимое высыпается рядом с аппаратом.
-- **Редстоун:** рычаги, кнопки, лампы, повторители, поршни, двери и люки работают внутри аппарата. Их звуки слышны на аппарате. Связи редстоуна между аппаратом и миром нет.
-- **Жидкости** текут по ванильным правилам **в пределах габаритов блоков аппарата**. Даже через отверстие в борту поток не уходит за крайнюю клетку. Ведром можно налить воду или лаву и зачерпнуть обратно. В воде на борту можно плыть, течение толкает сущности, а под водой расходуется воздух. Вода не добавляет массы аппарату; подводный туман камеры пока не поддерживается.
-- Блоки с особой формой (факелы, рычаги, таблички, ковры, ограды, стёкла) выбираются прицелом и ломаются так же, как в мире. Стороны ставящихся блоков (печь, лестница, дверь) считаются в системе координат аппарата, поэтому у повёрнутого аппарата они смотрят правильно.
-- **ТНТ** после поджига появляется как обычная мигающая сущность с дымом в мире рядом с аппаратом и наследует его скорость. ТНТ сталкивается с палубой, взрывается в мире и может повредить блоки аппарата, на котором был подожжён, если взорвался рядом. Сопротивление взрыву в мире и на борту считается отдельно; обычный ТНТ, подожжённый в мире, корпус аппарата не разрушает.
+- **Chests, barrels, hoppers, furnaces, crafting tables, anvils and other menus** open with right click, and items are saved in the craft together with the block. If a chest is broken, its contents spill next to the craft.
+- **Redstone:** levers, buttons, lamps, repeaters, pistons, doors and trapdoors work inside the craft, and their sounds are heard on it. There is no redstone connection between a craft and the world.
+- **Fluids** flow by vanilla rules **within the bounds of the craft's blocks**. Even through a hole in the side the flow does not leave the outermost cell. A bucket can pour and scoop water or lava. You can swim in water on board, currents push entities, and air is used under water. Water adds no mass to the craft; underwater camera fog is not supported yet.
+- Blocks with a special shape (torches, levers, signs, carpets, fences, glass) are aimed at and broken as in the world. The facing of placed blocks (furnace, stairs, door) is computed in the craft's frame, so on a rotated craft they face correctly.
+- **TNT** appears after ignition as an ordinary flashing entity with smoke in the world next to the craft and inherits its velocity. It collides with the deck, explodes in the world, and can damage the blocks of the craft it was lit on if it explodes nearby. Explosion resistance in the world and on board is computed separately; ordinary TNT lit in the world does not destroy a craft's hull.
 
-Что при этом не работает и не сохраняется:
+What does not work or is not saved:
 
-- Сущности: рамки, стойки для брони, вагонетки, лодки и яйца призыва на аппарат поставить нельзя (предмет не тратится). Перенос сущностей из блоков в мир реализован для примированного ТНТ и дропа, но не для всех блоков, создающих сущности.
-- Редактирование текста таблички: окно правки не открывается, блок-сущность для него есть только в измерении аппарата.
-- **Сборка** забирает все блоки выбранной области вместе с данными сундуков, печей и т. п., но **открытая вода** в области остаётся в мире. Если плот плавает и область выбрана вместе с водой вокруг него, море не уедет вместе с плотом. **Разборка** возвращает блоки с их данными; вода, налитая в аппарат, при разборке не возвращается в мир.
-- Если у аппарата отломилась часть, она становится отдельным аппаратом со своими блоками. Вода, которая осталась с кусками без блоков, пропадает.
-- Старые аппараты, сохранённые до этой версии, автоматически переносятся в ячейки при первой загрузке.
-- Новое измерение для мира «экспериментальное»: при первой загрузке существующего мира ванильный экран просит подтвердить это один раз. Хранилище лежит в `dimensions/aerolith/plot` папки мира, и удалять его нельзя: вместе с ним пропадут блоки всех аппаратов.
+- Entities: item frames, armour stands, minecarts, boats and spawn eggs cannot be placed on a craft (the item is not spent). Moving entities out of blocks into the world is implemented for primed TNT and drops, but not for every block that creates entities.
+- Editing sign text: the editing window does not open, because the block entity exists only in the craft's dimension.
+- **Assembling** takes all blocks of the chosen area with the data of chests, furnaces and so on, but **open water** in the area stays in the world, so the sea does not travel with a raft. **Disassembling** returns the blocks with their data; water poured into a craft is not returned to the world.
+- If part of a craft breaks off, it becomes a separate craft with its own blocks. Water left with pieces that have no blocks disappears.
+- Crafts saved by older versions are moved into cells automatically when first loaded.
+- A new dimension counts as "experimental" for a world: when you first load an existing world, the vanilla screen asks you to confirm once. The storage is in `dimensions/aerolith/plot` in the world folder and must not be deleted: all craft blocks go with it.
 
-Это не реализация интерактивных sub-levels Sable. Выброшенные предметы сталкиваются с корпусом, но не являются отдельными телами Rapier; отдельной коллизии снарядов нет. Тестируйте в новом мире: штатные отказы сборки и размещения откатываются, но запись регионов мира и сущностей Minecraft не атомарна при аварийном завершении процесса.
+This is not an implementation of interactive sub-levels. Thrown items collide with a hull but are not Rapier bodies of their own, and there is no separate projectile collision. Test in a new world: ordinary assembly and placement failures are rolled back, but the writing of world regions and Minecraft entities is not atomic if the process is killed.
 
-## Крылья, закрылки, Create и физический сборщик
+## Create (Minecraft 1.21.1 version)
 
-**Управляющие поверхности.** К плоскому крылу (`wing`) добавлены четыре блока той же формы: **руль высоты** (`elevator`), **руль направления** (`rudder`), **элерон** (`aileron`) и **закрылок** (`flap`). Крафт: крыло + железный самородок + краситель. Блок, поставленный на боковую грань, стоит вертикально (как киль); пустая рука поворачивает его между плоским и вертикальным положением.
-Клавиши пилота: `W/S` тангаж, `A/D` рыскание, `←/→` крен, `Z/X` тяга, `G/H` выпустить/убрать закрылки (клавиши меняются в настройках). Каждая поверхность отклоняется так, как нужно для вашего рычага: хвостовое оперение, «утка» и пара элеронов на разных крыльях отвечают на одну и ту же клавишу правильно. Отклонение меняет кривизну профиля (поднимает кривую подъёмной силы и добавляет сопротивление), а угол срыва остаётся прежним, поэтому закрылки не срывают крыло раньше.
+Create 6.0.10 is optional: the mods coexist and neither needs the other. Rotating machines on board run as they do anywhere (they live in the craft's cell of the plot dimension), and two things are added:
 
-**Физический сборщик** (`physics_assembler`) превращает конструкцию, частью которой он является (все касающиеся блоки в пределах радиуса, до ≈1 млн блоков), в аппарат; снова нажатый на борту, возвращает его в блоки. Пустая рука с Shift меняет радиус. Предел аппарата — 1 000 000 блоков; запрос «какие коробки рядом» идёт через пространственный индекс.
+- An **encased fan** pushes the craft the other way from its air flow: about 2,500 N at 256 rpm, growing with the square of its speed. A block at its front stops it.
+- A **mechanical or windmill bearing** carrying a rotating contraption works as a propeller: every block of the contraption is a blade of one square metre, pushing with `1/2 * rho * C * (omega * r)^2`, with a ceiling of 80 kN per bearing. Reversing the rotation reverses the push.
 
-**Create** (версия для Minecraft 1.21.1, Create 6.0.10): моды сосуществуют без обязательной зависимости. Вращающиеся машины на борту работают как обычно (они живут в плоте аппарата), и добавлено следующее: **энкейзд-вентилятор** толкает аппарат (≈2 500 Н при 256 об/мин, квадратично по скорости), а **механический и ветряной подшипник** с вращающейся конструкцией работает как винт: каждый блок конструкции — лопасть в 1 м² (`½·ρ·C·(ω·r)²`, потолок 80 кН на подшипник). Ветряная мельница вращает себя сама (так сделано в Create), поэтому аппарат с ней разгоняется без мотора. Блоки вращающейся конструкции на время вращения не входят в корпус аппарата (их масса не учитывается).
-Тесты Create: положите `create-1.21.1-6.0.10-281.jar` в `run/createGameTestServer/mods` и запустите `./gradlew runCreateGameTestServer` (с Create игрокам-пустышкам не доходят его пакеты, поэтому эти тесты идут отдельным сервером).
+A windmill bearing makes its own rotation out of its sails (that is how Create does it), so a craft with one accelerates without a motor. The blocks of a rotating contraption are not part of the craft's hull while it turns, so their mass is not counted.
 
-## Проверка производительности
+## Performance
 
-На загруженной площадке оператор может создать плоты командой `/aerolith spawn <количество> <x> <y> <z> [блок]`. Например, `/aerolith spawn 10000 1 1 1` создаёт отдельные одноблочные деревянные тела, а `/aerolith spawn 1 32 32 32 minecraft:stone` — один плот из 32 768 блоков. Команда работает порциями и пропускает занятые и незагруженные места. В тестовом мире результат можно убрать командой `/kill @e[tag=aerolith_spawned]`.
+On a loaded area an operator can create rafts with `/aerolith spawn <count> <x> <y> <z> [block]`. For example `/aerolith spawn 10000 1 1 1` creates separate one-block wooden bodies, and `/aerolith spawn 1 32 32 32 minecraft:stone` one raft of 32,768 blocks. The command works in batches and skips occupied and unloaded places. In a test world remove the result with `/kill @e[tag=aerolith_spawned]`.
 
-На пустой ровной площадке **в тестовом мире** снимите фон: выполните `/aerolith perf reset`, подождите 15 секунд, затем выполните `/aerolith perf`. Не меняя дальность симуляции и позицию, запустите `/aerolith bench 16 16 300`: это 16 временных плотов размером 16×16 на 300 измеряемых тиков. Добавьте `water` в конец команды, чтобы налить воду **внутрь** плотов. Не покидайте площадку во время прогона. Команды требуют прав оператора; после прогона тестовые плоты удаляются.
+On an empty flat area **in a test world** take a baseline: run `/aerolith perf reset`, wait 15 seconds, then run `/aerolith perf`. Without changing the simulation distance or position, run `/aerolith bench 16 16 300`: 16 temporary rafts of 16×16 over 300 measured ticks. Add `water` at the end to pour water **inside** the rafts. Do not leave the area during the run. The commands need operator rights; the test rafts are removed afterwards.
 
-- В отчёте `server.tick` — время серверного тика (бюджет **50 мс** при 20 TPS), `server.native-step` — шаг физики в Rust вместе с вызовом JNI, `server.terrain` — обновление коллайдеров и воды мира. Эти времена вложены, а не складываются. Смотрите `n`, `avg` и `worst` отдельно для падения и последней трети, когда плоты обычно уже лежат. Синхронное создание плотов показано отдельно как `Spawn`.
-- `/aerolithperf` измеряет CPU-время подготовки отрисовки аппаратов, не FPS и не время GPU. Команда выводит и обнуляет только клиентские замеры.
-- `AEROLITH_BENCH=1 ./gradlew runGameTestServer` прогоняет четыре сценария без клиента, в том числе один плот 60×60. Результаты — в серверном логе. `AEROLITH_PROFILE=1` при запуске сервера включает подробные тайминги движка Rust в stderr. Для сравнения обычной производительности оставляйте этот профилировщик выключенным.
-- Для замера самого Rust без Minecraft: `cargo test --release --locked --manifest-path native/Cargo.toml bench_rafts -- --ignored --nocapture`.
+- In the report `server.tick` is the server tick time (the budget is **50 ms** at 20 TPS), `server.native-step` is the Rust physics step including the JNI call, and `server.terrain` is the update of world colliders and water. These times are nested, not additive. Look at `n`, `avg` and `worst` separately for the fall and for the last third, when the rafts have usually come to rest. The synchronous creation of rafts is shown separately as `Spawn`.
+- `/aerolithperf` measures the CPU time of preparing the crafts for drawing, not FPS and not GPU time. It prints and resets only client-side measurements.
+- `AEROLITH_BENCH=1 ./gradlew runGameTestServer` runs four scenarios without a client, including one 60×60 raft. The results are in the server log. `AEROLITH_PROFILE=1` at server start enables detailed Rust engine timings on stderr; leave it off when comparing ordinary performance.
+- To measure the Rust side alone: `cargo test --release --locked --manifest-path native/Cargo.toml bench_rafts -- --ignored --nocapture`.
 
-### Сравнение с Sable
+### Comparison with Sable
 
-`tools/bench_server.py` прогоняет одни и те же сцены на выделенном сервере с одним из модов и снимает время ванильными `/tick sprint` и `/tick query`. Каждая строка проверяет, что все тела приземлились, и показывает постороннюю нагрузку на процессор. Нужны `JAVA_HOME` от JDK 21 и `./gradlew prepareServerRun`.
+`tools/bench_server.py` runs the same scenes on a dedicated server with one of the mods and records the time with vanilla `/tick sprint` and `/tick query`. Every row checks that all bodies landed and shows the load from other processes. It needs `JAVA_HOME` of a JDK and `./gradlew prepareServerRun`.
 
 ```bash
-python3 tools/bench_server.py sable SABLE.jar НОВАЯ_ПАПКА_1 3
-python3 tools/bench_server.py aerolith build/libs/aerolith-0.3.0.jar НОВАЯ_ПАПКА_2 3
-python3 tools/bench_server.py compare НОВАЯ_ПАПКА_1/result.json НОВАЯ_ПАПКА_2/result.json
+python3 tools/bench_server.py sable SABLE.jar NEW_DIR_1 3
+python3 tools/bench_server.py aerolith build/libs/aerolith-0.4.0.jar NEW_DIR_2 3
+python3 tools/bench_server.py compare NEW_DIR_1/result.json NEW_DIR_2/result.json
 ```
 
-Исторический замер 25.11.2026, до замены решателя контактов: i5-3570K, Java 21, куча 2 ГБ, без игроков, настройки обоих модов по умолчанию, Sable 2.0.6 против прежней сборки Aerolith, медиана трёх повторов, мс на тик целиком при цели в 20 TPS:
+Ten thousand bodies at identical coordinates, Aerolith against Sable 2.0.6, two runs each on an i5-3570K, Java 21, 2 GB heap, no players, `randomTickSpeed=0`, default physics settings. Both mods got separate oak blocks 2 blocks apart: four full 48×48 layers and 784 blocks in the fifth. For Sable the blocks were placed at Aerolith's spawn coordinates and `/sable assemble shatter area` was applied. The start coordinates matched, and after every run all 10,000 bodies were still in the scene and had landed.
 
-| Сцена | Падение: Sable | Aerolith | Покой: Sable | Aerolith |
-|---|---|---|---|---|
-| 16 платформ 16×16 | 6,7 | 1,2 | 0,9 | 0,3 |
-| 1 платформа 60×60 | 8,2 | 0,9 | 0,7 | 0,3 |
-| куча из 64 кубов 3×3×3 | 17,8 | 1,4 | 1,4 | 0,3 |
-| 16 шахматных корпусов 8×2×8 | 3,4 | 0,9 | 0,8 | 0,3 |
-| 64 платформы 4×4 | 6,2 | 1,5 | 1,3 | 0,3 |
-| 1540 отдельных блоков | 27,4 | 12,9 | 12,0 | 1,8 |
-
-Числа относятся к этим сценам и этой машине. В историческом замере P99 падения 1540 блоков был близок у обоих модов (56 и 61 мс, разбросы пересекались).
-
-Контрольный замер текущего JAR (`5897ce78`) на той же машине: Sable 2.0.6, предыдущий JAR Aerolith (`ff96c411`) и текущий. Ниже — медианы двух обычных прогонов каждого JAR, мс на полный серверный тик (`/tick query`). Посторонняя нагрузка была 0,72–1,17 ядра, поэтому небольшие различия не стоит считать устойчивыми.
-
-| Сцена и фаза | Sable | Aerolith прежде | Aerolith сейчас |
-|---|---:|---:|---:|
-| 64 куба 3×3×3, падение | 16,40 | 1,45 | 1,45 |
-| 64 куба, покой | 1,90 | 0,45 | 0,45 |
-| 1540 блоков, падение | 26,95 | 11,25 | 9,75 |
-| 1540 блоков, P99 падения | 86,80 | 37,35 | 49,20 |
-| 1540 блоков, покой | 13,70 | 2,20 | 2,05 |
-
-Первый замер больших сцен сравнивал только две сборки Aerolith. На плоском мире принудительно загрузили чанки командой `/forceload add -64 -64 63 79`, затем при `/tick freeze` выполнили `/execute positioned 0 -40 -40 rotated 0 0 run aerolith spawn N 1 1 1`. После окончания создания измерили первые 80 тиков (`/tick sprint 80`), дали телам 200 тиков осесть и измерили ещё 180 тиков в покое. По одному контрольному прогону на сборку, все тела приземлились.
-
-| Тел | Создание, с (прежде → сейчас) | Падение, мс/тик | Покой, мс/тик |
-|---|---:|---:|---:|
-| 10 000 | 21,13 → 8,13 | 114,40 → 87,64 | 14,68 → 13,43 |
-| 16 384 | 62,96 → 10,40 | 274,08 → 162,52 | 26,56 → 23,65 |
-
-Повтор с индексом корпусов при близкой к старому прогону фоновой нагрузке дал 9,30 и 13,44 с на создание. В остальном нагрузка между большими прогонами различалась: по ним нельзя определить точный выигрыш физики. Одновременное падение этой массы тел всё ещё превышает бюджет 50 мс/тик. Вода, полёт с тягой, стоящие на плотах игроки и FPS клиента здесь не сравнивались.
-
-#### 10 000 тел на одинаковых координатах
-
-Aerolith (`5897ce78`) и Sable 2.0.6, по два прогона на i5‑3570K, Java 21, куча 2 ГБ, без игроков, `randomTickSpeed=0`, штатные настройки физики. В обоих модах — отдельные дубовые блоки с шагом 2 блока: четыре полных слоя 48×48 и 784 блока в пятом. Для Sable расставили блоки на координатах спавна Aerolith и применили `/sable assemble shatter area`; `spawn grid 22` дал бы другое расположение и число тел. Стартовые координаты совпали; после каждого прогона все 10 000 тел остались в сцене и приземлились.
-
-| Фаза | Aerolith | Sable |
+| Phase | Aerolith | Sable |
 |---|---:|---:|
-| Создание при замороженной физике, с | 10,00 | 12,05, из них 0,50 на расстановку блоков |
-| Первые 80 тиков падения, мс/тик | 86,96 | 190,60 |
-| Следующие 200 тиков, мс/тик | 10,24 | 82,16 |
-| 180 тиков в покое, мс/тик | 9,02 | 60,54 |
+| Creation with frozen physics, s | 10.00 | 12.05, of which 0.50 placing blocks |
+| First 80 ticks of falling, ms/tick | 86.96 | 190.60 |
+| Next 200 ticks, ms/tick | 10.24 | 82.16 |
+| 180 ticks at rest, ms/tick | 9.02 | 60.54 |
 
-На этой сцене у Aerolith в 2,2 раза меньше времени на тик падения и в 6,7 раза — в покое. При падении ни один мод не укладывается в бюджет 50 мс/тик. Посторонняя нагрузка составляла около 1–1,4 из 4 ядер; это не замер на полностью свободной машине.
+On this scene Aerolith needs 2.2 times less time per tick while falling and 6.7 times less at rest. While falling neither mod fits the 50 ms/tick budget. Outside load was about 1 to 1.4 of 4 cores, so this is not a measurement on a fully idle machine. The figures apply to these scenes and this machine.
 
-## Сборка и тесты
+## Building and tests
 
-### Если клиент падает при запуске с `There is no OpenGL context current`
-
-Это сбой загрузчика NeoForge и графического стека, а не Aerolith. Проверка: уберите **все** JAR из `mods` и запустите клиент — падение останется, потому что оно происходит в `fml_earlydisplay` до загрузки мира и до вызова кода мода. В стеке нет классов Aerolith.
-
-На этом компьютере (Hyprland, Wayland, NVIDIA 580) GLFW не может создать контекст через Wayland/EGL. Рабочий путь — X11:
-
-1. Убедитесь, что X11 работает: `DISPLAY=:0 xset q` должен отвечать без ошибки.
-2. Если не отвечает, перезапустите сессию без перезагрузки компьютера: `hyprctl dispatch exit`. SDDM с автологином вернёт рабочий стол; все приложения закроются.
-3. Если закрывать приложения не хочется, поднимите отдельный Xwayland и запускайте игру через него:
-   ```bash
-   Xwayland :1 -geometry 1920x1080 -nolisten tcp >/dev/null 2>&1 &
-   ```
-   В Prism: **Правка → Настройки → Пользовательские команды → Wrapper command** = `env -u WAYLAND_DISPLAY DISPLAY=:1`. При этом `earlyWindowControl` можно оставить включённым.
-
-Второй путь проверен на этом компьютере: тот же JAR с включённым ранним окном загрузился и вошёл в мир под отдельным Xwayland. `hyprctl dispatch exit` — обычный выход из сессии, а не перезагрузка; его здесь не запускали, чтобы не закрывать открытые приложения. Одного `earlyWindowControl = false` без рабочего X11 недостаточно: тогда падает уже обычное окно.
-
-Нужны JDK 21 (`JAVA_HOME` должен указывать на неё) и Rust с `cargo` (сборка проверена на Rust 1.95). Первая сборка скачивает Gradle, NeoForge и зависимости Rust. На Windows используйте `gradlew.bat`.
+You need JDK 21 (`JAVA_HOME` must point to it) and Rust with `cargo` (the build is checked on Rust 1.95). The first build downloads Gradle, NeoForge and the Rust dependencies.
 
 ```bash
 ./gradlew build
@@ -214,4 +163,14 @@ Aerolith (`5897ce78`) и Sable 2.0.6, по два прогона на i5‑3570K
 cargo test --locked --manifest-path native/Cargo.toml
 ```
 
-`build` собирает и упаковывает нативную библиотеку и проверяет JNI прямо из итогового JAR. `runGameTestServer` создаёт отдельный тестовый мир; команда не трогает папку с обычными сохранениями. Для сборки на Windows нужен toolchain Rust MSVC и соответствующий линкер.
+`build` compiles and packs the native library and checks JNI from the final jar. `runGameTestServer` creates a separate test world and does not touch your normal saves. On Windows use `gradlew.bat`; building there needs the Rust MSVC toolchain and its linker.
+
+### Create tests
+
+Put `create-1.21.1-6.0.10-281.jar` into `run/createGameTestServer/mods` and run `./gradlew runCreateGameTestServer`. With Create loaded, its packets cannot reach the mock players of the other tests, so these tests run on a server of their own.
+
+### If the client crashes at startup with `There is no OpenGL context current`
+
+This is a failure of the NeoForge loader and the graphics stack, not of Aerolith. To check: remove **all** jars from `mods` and start the client; the crash remains, because it happens in `fml_earlydisplay` before the world loads and before any mod code runs. No Aerolith classes appear in the stack.
+
+On Wayland with some NVIDIA drivers GLFW cannot create a context through Wayland/EGL. A working path is X11: run a separate Xwayland and start the game through it (`Xwayland :1 -geometry 1920x1080 -nolisten tcp &`, then launch with `env -u WAYLAND_DISPLAY DISPLAY=:1`; in Prism set this as *Settings → Custom commands → Wrapper command*). Turning off `earlyWindowControl` alone is not enough without a working X11, because then the ordinary window fails.

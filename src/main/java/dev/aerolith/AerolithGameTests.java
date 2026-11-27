@@ -135,28 +135,6 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
-    public static void newPartsAndLegacyMarkers(GameTestHelper test) {
-        for (String part : List.of("pilot_seat", "thruster", "wing")) {
-            test.assertTrue(test.getLevel().getRecipeManager().byKey(ResourceLocation.fromNamespaceAndPath(Aerolith.ID, part)).isPresent(),
-                    "Missing survival recipe for " + part);
-        }
-        Hull legacy = new Hull(List.of(new CraftBlock(BlockPos.ZERO, Blocks.ORANGE_WOOL.defaultBlockState()),
-                new CraftBlock(BlockPos.ZERO.above(), Blocks.RED_WOOL.defaultBlockState())));
-        test.assertTrue(legacy.powered && legacy.seat != null, "Old wool craft lost power or seat");
-        Hull wing = new Hull(List.of(new CraftBlock(BlockPos.ZERO, AerolithParts.WING.get().defaultBlockState())));
-        test.assertTrue(Math.abs(wing.mass - 20.0) < 1e-7 && wing.surfaces.length == 8 && wing.surfaces[0] == 1,
-                "The thin wing must have its real volume and a modeled foil");
-        Hull engine = new Hull(List.of(new CraftBlock(BlockPos.ZERO,
-                AerolithParts.THRUSTER.get().defaultBlockState().setValue(BlockStateProperties.FACING, Direction.NORTH))));
-        boolean pointsNorth = false;
-        for (int i = 0; i < engine.surfaces.length; i += 8) {
-            if (engine.surfaces[i] == 2 && engine.surfaces[i + 6] == -1) pointsNorth = true;
-        }
-        test.assertTrue(pointsNorth, "An engine facing north did not produce local -Z thrust");
-        test.succeed();
-    }
-
     private static double surfaceArea(Hull hull) {
         double sum = 0.0;
         for (int i = 0; i < hull.surfaces.length; i += 8) if (hull.surfaces[i] == 0) sum += hull.surfaces[i + 7];
@@ -1031,17 +1009,17 @@ public final class AerolithGameTests {
     }
 
     @GameTest(template = "test_pad", timeoutTicks = 120)
-    public static void thinWingLandsOnItsOwnShape(GameTestHelper test) {
+    public static void thinBlockLandsOnItsOwnShape(GameTestHelper test) {
         for (int x = 2; x <= 8; x++) {
             for (int z = 2; z <= 8; z++) test.setBlock(x, 1, z, Blocks.STONE);
         }
         BlockPos drop = new BlockPos(5, 6, 5);
-        test.setBlock(drop, AerolithParts.WING.get());
+        test.setBlock(drop, Blocks.WHITE_CARPET);
         CraftEntity craft = assembleWithTool(test, editor(test.getLevel()), drop, drop);
-        double expectedCenter = test.absolutePos(new BlockPos(5, 1, 5)).getY() + 1 + 1.0 / 16.0;
+        double expectedCenter = test.absolutePos(new BlockPos(5, 1, 5)).getY() + 1 + 0.5;
         test.startSequence().thenWaitUntil(() ->
                 test.assertTrue(Math.abs(craft.getY() - expectedCenter) < 0.04 && craft.speed() < 0.2,
-                        "Wing collided as a full block instead of a thin plate")
+                        "A carpet collided as a full block instead of a thin plate")
         ).thenExecute(craft::discard).thenSucceed();
     }
 
@@ -1064,40 +1042,6 @@ public final class AerolithGameTests {
             test.assertTrue(Math.abs(craft.getY() - surface) < 0.16 && craft.speed() < 0.12,
                     "A 480 kg/m³ block did not float half-submerged");
         }).thenExecute(craft::discard).thenSucceed();
-    }
-
-    @SuppressWarnings("removal")
-    @GameTest(template = "test_pad", skyAccess = true, timeoutTicks = 120)
-    public static void pilotCanLiftAndDismount(GameTestHelper test) {
-        ServerLevel level = test.getLevel();
-        BlockPos lift = new BlockPos(4, 2, 4);
-        test.setBlock(lift.below(), Blocks.STONE);
-        test.setBlock(lift, AerolithParts.THRUSTER.get().defaultBlockState().setValue(BlockStateProperties.FACING, Direction.UP));
-        test.setBlock(lift.above(), AerolithParts.SEAT.get());
-        ServerPlayer pilot = test.makeMockServerPlayerInLevel();
-        pilot.setPos(Vec3.atCenterOf(test.absolutePos(lift.east())));
-        CraftEntity craft = assembleWithTool(test, pilot, lift, lift.above());
-        craft.interact(pilot, InteractionHand.MAIN_HAND);
-        test.assertTrue(craft.isControlledBy(pilot), "Right click did not put the owner in the cockpit");
-        double start = craft.getY();
-        for (int tick = 1; tick < 39; tick++) {
-            int keys = PilotInput.THROTTLE_UP | (tick >= 28 ? PilotInput.RIGHT : 0);
-            test.runAfterDelay(tick, () -> craft.acceptPilotInput(pilot, keys));
-        }
-        test.runAfterDelay(40, () -> {
-            test.assertTrue(craft.throttle() > 0.5, "Pilot input did not reach Rust thrust");
-            test.assertTrue(craft.getY() > start + 2, "Craft did not take off");
-            test.assertTrue(Hull.rotate(craft.orientation(1), new Vec3(0, 0, 1)).x < -0.1,
-                    "The craft did not turn right from its initial heading");
-            pilot.stopRiding();
-            test.assertTrue(!craft.isVehicle(), "Could not dismount");
-            test.runAfterDelay(2, () -> {
-                test.assertTrue(craft.throttle() == 0.0, "A dismounted craft still has powered thrust");
-                craft.discard();
-                level.getServer().getPlayerList().remove(pilot);
-                test.succeed();
-            });
-        });
     }
 
     private static ServerPlayer editor(ServerLevel level) {
