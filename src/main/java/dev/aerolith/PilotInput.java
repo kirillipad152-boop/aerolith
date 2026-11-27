@@ -3,7 +3,7 @@ package dev.aerolith;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -21,12 +21,12 @@ public record PilotInput(int bits) implements CustomPacketPayload {
     public static final int FLAPS_UP = 512;
     static final int VALID_BITS = FORWARD | BACK | LEFT | RIGHT | THROTTLE_UP | THROTTLE_DOWN | ROLL_LEFT | ROLL_RIGHT | FLAPS_DOWN
             | FLAPS_UP;
-    private static final Type<PilotInput> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(Aerolith.ID, "pilot_input"));
+    private static final Type<PilotInput> TYPE = new Type<>(Identifier.fromNamespaceAndPath(Aerolith.ID, "pilot_input"));
     private static final StreamCodec<ByteBuf, PilotInput> CODEC = StreamCodec.ofMember(
             (input, buffer) -> buffer.writeShort(input.bits()), buffer -> new PilotInput(buffer.readUnsignedShort()));
 
     public static void register(RegisterPayloadHandlersEvent event) {
-        var registrar = event.registrar("6");
+        var registrar = event.registrar("7");
         registrar.playToServer(TYPE, CODEC, PilotInput::receive);
         CraftClick.register(registrar);
         CraftPush.register(registrar);

@@ -4,7 +4,6 @@ import java.util.List;
 import java.util.UUID;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
@@ -17,14 +16,9 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 import org.joml.Quaternionf;
 
-@GameTestHolder(Aerolith.ID)
-@PrefixGameTestTemplate(false)
 public final class HullCollisionGameTests {
-    @GameTest(template = "test_pad")
     public static void rotatedContactAndSlideRespectTerrain(GameTestHelper test) {
         Vec3 origin = origin(test);
         CraftEntity craft = craft(test, origin, planks(BlockPos.ZERO));
@@ -44,7 +38,6 @@ public final class HullCollisionGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void crossAxesAndHullOpeningsStayEmpty(GameTestHelper test) {
         Vec3 origin = origin(test);
         CraftEntity craft = craft(test, origin, planks(BlockPos.ZERO));
@@ -65,7 +58,6 @@ public final class HullCollisionGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void placementSeesBothSidesOfAColumnAndTracksHullChanges(GameTestHelper test) {
         Vec3 at = origin(test);
         Vec3 edge = new Vec3(Math.floor(at.x / 16) * 16 + 0.1, at.y + 30, at.z);
@@ -91,7 +83,6 @@ public final class HullCollisionGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void slabSupportsAndCarriesItems(GameTestHelper test) {
         Vec3 origin = origin(test);
         CraftEntity craft = craft(test, origin, new CraftBlock(BlockPos.ZERO, Blocks.SMOOTH_STONE_SLAB.defaultBlockState()));
@@ -116,7 +107,6 @@ public final class HullCollisionGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void translatingSidePushesInsteadOfPassingThrough(GameTestHelper test) {
         Vec3 origin = origin(test);
         CraftEntity craft = craft(test, origin, planks(BlockPos.ZERO));
@@ -129,13 +119,13 @@ public final class HullCollisionGameTests {
     }
 
     @SuppressWarnings("removal")
-    @GameTest(template = "test_pad")
     public static void playerCrouchesAndPacketsRespectDeck(GameTestHelper test) {
         Vec3 origin = origin(test);
         CraftEntity craft = craft(test, origin, planks(BlockPos.ZERO), planks(new BlockPos(1, 0, 0)));
         ServerPlayer player = test.makeMockServerPlayerInLevel();
         try {
-            player.connection.handleAcceptTeleportPacket(new ServerboundAcceptTeleportationPacket(1));
+            ackTeleport(player, 1);
+            player.connection.handleAcceptPlayerLoad(new net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket());
             player.setPos(origin.add(0, 1, 0));
             player.move(MoverType.SELF, new Vec3(0, -1, 0));
             test.assertTrue(player.onGround(), "Player was not grounded on the deck");
@@ -168,7 +158,7 @@ public final class HullCollisionGameTests {
             packet(player, beside.add(0.5, 0, 0), false);
             near(test, player, beside, "The packet handler must reject a move that ends deep inside the hull");
 
-            player.connection.handleAcceptTeleportPacket(new ServerboundAcceptTeleportationPacket(2));
+            ackTeleport(player, 2);
             Vec3 above = current.add(0, 1.2, 0);
             player.setPos(above);
             player.connection.resetPosition();
@@ -181,7 +171,6 @@ public final class HullCollisionGameTests {
         }
     }
 
-    @GameTest(template = "test_pad")
     public static void creatureWalksUpATiltedDeckWithoutSlidingBack(GameTestHelper test) {
         Vec3 origin = origin(test);
         CraftBlock[] deck = new CraftBlock[15];
@@ -189,7 +178,7 @@ public final class HullCollisionGameTests {
         CraftEntity craft = craft(test, origin, deck);
         float tilt = 0.35f; // about 20 degrees, rising toward +x
         pose(craft, origin, new Quaternionf().rotationZ(tilt));
-        var pig = test.spawn(net.minecraft.world.entity.EntityType.PIG, 0, 0, 0);
+        var pig = test.spawn(net.minecraft.world.entity.EntityTypes.PIG, 0, 0, 0);
         double c = Math.cos(tilt), s = Math.sin(tilt);
         pig.setPos(origin.add(-1.2 * c - 0.5 * s, -1.2 * s + 0.5 * c + 0.01, 0));
         // A box rides a slope on its lower front edge, so settle onto it before measuring.
@@ -209,11 +198,10 @@ public final class HullCollisionGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void creatureWalkingIntoAHullPushesIt(GameTestHelper test) {
         Vec3 origin = origin(test);
         CraftEntity craft = craft(test, origin, planks(BlockPos.ZERO));
-        var pig = test.spawn(net.minecraft.world.entity.EntityType.PIG, 0, 0, 0);
+        var pig = test.spawn(net.minecraft.world.entity.EntityTypes.PIG, 0, 0, 0);
         pig.setPos(origin.add(1.2, -0.5, 0));
         for (int i = 0; i < 5; i++) pig.move(MoverType.SELF, new Vec3(-0.15, 0, 0));
         test.assertTrue(craft.pendingPushes() > 0, "A creature blocked by the hull wall must push it");
@@ -255,8 +243,14 @@ public final class HullCollisionGameTests {
         craft.applyNative(state, 0);
     }
 
+    private static void ackTeleport(ServerPlayer player, int id) {
+        player.connection.handleAcceptTeleportPacket(new ServerboundAcceptTeleportationPacket(id,
+                player.getX(), player.getY(), player.getZ(), player.getYRot(), player.getXRot()));
+    }
+
     private static void packet(ServerPlayer player, Vec3 pos, boolean onGround) {
-        player.connection.handleMovePlayer(new ServerboundMovePlayerPacket.Pos(pos.x, pos.y, pos.z, onGround));
+        player.connection.handleMovePlayer(new ServerboundMovePlayerPacket.Pos(pos, onGround, false));
+        player.connection.handleClientTickEnd(net.minecraft.network.protocol.game.ServerboundClientTickEndPacket.INSTANCE);
     }
 
     private static void near(GameTestHelper test, Entity entity, Vec3 expected, String message) {

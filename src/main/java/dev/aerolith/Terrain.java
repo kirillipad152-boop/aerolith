@@ -53,7 +53,7 @@ final class Terrain {
         @Override public FluidState getFluidState(BlockPos pos) { return getBlockState(pos).getFluidState(); }
         @Override public BlockEntity getBlockEntity(BlockPos pos) { return null; }
         @Override public int getHeight() { return level.getHeight(); }
-        @Override public int getMinBuildHeight() { return level.getMinBuildHeight(); }
+        @Override public int getMinY() { return level.getMinY(); }
     };
 
     Terrain(ServerLevel level, FrictionConfig materials) {

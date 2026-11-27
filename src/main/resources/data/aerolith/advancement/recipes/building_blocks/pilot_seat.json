@@ -7,7 +7,7 @@
     },
     "has_the_recipe": {
       "trigger": "minecraft:recipe_unlocked",
-      "conditions": { "recipe": "aerolith:pilot_seat" }
+      "conditions": { "recipes": "aerolith:pilot_seat" }
     }
   },
   "requirements": [["has_leather", "has_the_recipe"]],

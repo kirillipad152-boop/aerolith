@@ -7,7 +7,7 @@
     },
     "has_the_recipe": {
       "trigger": "minecraft:recipe_unlocked",
-      "conditions": { "recipe": "aerolith:assembler" }
+      "conditions": { "recipes": "aerolith:assembler" }
     }
   },
   "requirements": [["has_amethyst_shard", "has_the_recipe"]],

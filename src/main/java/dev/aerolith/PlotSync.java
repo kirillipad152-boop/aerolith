@@ -10,9 +10,10 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
@@ -22,7 +23,6 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
-import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 
 /**
@@ -53,13 +53,14 @@ final class PlotSync {
     }
 
     static void sendFull(CraftEntity craft, ServerPlayer player) {
+        if (player.connection == null || !player.connection.hasChannel(Chunk.TYPE)) return;
         ServerLevel plot = craft.plotLevel();
         if (plot == null || craft.plotId() < 0) return;
         List<Long> keys = new ArrayList<>(craft.chunkKeys());
         for (int i = 0; i < keys.size(); i++) {
             long key = keys.get(i);
             LevelChunk chunk = plot.getChunk(ChunkPos.getX(key), ChunkPos.getZ(key));
-            PacketDistributor.sendToPlayer(player, new Chunk(craft.getId(), craft.plotOrigin(), keys.size() - 1 - i,
+            player.connection.send(new Chunk(craft.getId(), craft.plotOrigin(), keys.size() - 1 - i,
                     ChunkPos.getX(key), ChunkPos.getZ(key), new ClientboundLevelChunkPacketData(chunk)));
         }
     }
@@ -71,7 +72,7 @@ final class PlotSync {
         for (int i = 0; i < keys.size(); i++) {
             long key = keys.get(i);
             LevelChunk chunk = plot.getChunk(ChunkPos.getX(key), ChunkPos.getZ(key));
-            PacketDistributor.sendToPlayersTrackingEntity(craft, new Chunk(craft.getId(), craft.plotOrigin(), keys.size() - 1 - i,
+            sendToTrackers(craft, new Chunk(craft.getId(), craft.plotOrigin(), keys.size() - 1 - i,
                     ChunkPos.getX(key), ChunkPos.getZ(key), new ClientboundLevelChunkPacketData(chunk)));
         }
     }
@@ -92,31 +93,38 @@ final class PlotSync {
             entries.add(new Entry(packed, Block.getId(plot.getBlockState(pos)),
                     entity == null ? -1 : BuiltInRegistries.BLOCK_ENTITY_TYPE.getId(entity.getType()), tag));
         }
-        PacketDistributor.sendToPlayersTrackingEntity(craft, new Delta(craft.getId(), entries));
+        sendToTrackers(craft, new Delta(craft.getId(), entries));
     }
 
     static void sendEvent(CraftEntity craft, BlockPos pos, int type, int data) {
-        PacketDistributor.sendToPlayersTrackingEntity(craft, new Event(craft.getId(), pos.asLong(), type, data));
+        sendToTrackers(craft, new Event(craft.getId(), pos.asLong(), type, data));
+    }
+
+    static void sendToTrackers(CraftEntity craft, CustomPacketPayload payload) {
+        if (craft.level() instanceof ServerLevel level) {
+            level.getChunkSource().sendToTrackingPlayersFiltered(craft, new ClientboundCustomPayloadPacket(payload),
+                    player -> player.connection.hasChannel(payload));
+        }
     }
 
     /** One plot chunk in vanilla's format; {@code remaining} counts the chunks still to come for this craft. */
     record Chunk(int craft, BlockPos origin, int remaining, int chunkX, int chunkZ, ClientboundLevelChunkPacketData data)
             implements CustomPacketPayload {
-        static final Type<Chunk> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(Aerolith.ID, "plot_chunk"));
+        static final Type<Chunk> TYPE = new Type<>(Identifier.fromNamespaceAndPath(Aerolith.ID, "plot_chunk"));
         static final StreamCodec<RegistryFriendlyByteBuf, Chunk> CODEC = StreamCodec.of((buffer, chunk) -> {
             buffer.writeVarInt(chunk.craft);
             buffer.writeLong(chunk.origin.asLong());
             buffer.writeVarInt(chunk.remaining);
             buffer.writeInt(chunk.chunkX);
             buffer.writeInt(chunk.chunkZ);
-            chunk.data.write(buffer);
+            ClientboundLevelChunkPacketData.STREAM_CODEC.encode(buffer, chunk.data);
         }, buffer -> {
             int craft = buffer.readVarInt();
             BlockPos origin = BlockPos.of(buffer.readLong());
             int remaining = buffer.readVarInt();
             int x = buffer.readInt();
             int z = buffer.readInt();
-            return new Chunk(craft, origin, remaining, x, z, new ClientboundLevelChunkPacketData(buffer, x, z));
+            return new Chunk(craft, origin, remaining, x, z, ClientboundLevelChunkPacketData.STREAM_CODEC.decode(buffer));
         });
 
         @Override
@@ -128,7 +136,7 @@ final class PlotSync {
     record Entry(long pos, int state, int entityType, @Nullable CompoundTag tag) {}
 
     record Delta(int craft, List<Entry> entries) implements CustomPacketPayload {
-        static final Type<Delta> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(Aerolith.ID, "plot_delta"));
+        static final Type<Delta> TYPE = new Type<>(Identifier.fromNamespaceAndPath(Aerolith.ID, "plot_delta"));
         static final StreamCodec<RegistryFriendlyByteBuf, Delta> CODEC = StreamCodec.of((buffer, delta) -> {
             buffer.writeVarInt(delta.craft);
             buffer.writeVarInt(delta.entries.size());
@@ -159,7 +167,7 @@ final class PlotSync {
 
     /** A block event (a chest lid, a piston) of a plot block, which clients replay on their copy. */
     record Event(int craft, long pos, int kind, int data) implements CustomPacketPayload {
-        static final Type<Event> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(Aerolith.ID, "plot_event"));
+        static final Type<Event> TYPE = new Type<>(Identifier.fromNamespaceAndPath(Aerolith.ID, "plot_event"));
         static final StreamCodec<RegistryFriendlyByteBuf, Event> CODEC = StreamCodec.of((buffer, event) -> {
             buffer.writeVarInt(event.craft).writeLong(event.pos).writeVarInt(event.kind).writeVarInt(event.data);
         }, buffer -> new Event(buffer.readVarInt(), buffer.readLong(), buffer.readVarInt(), buffer.readVarInt()));

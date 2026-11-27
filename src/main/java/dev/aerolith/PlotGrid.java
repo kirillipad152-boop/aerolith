@@ -65,6 +65,6 @@ final class PlotGrid {
     }
 
     static long chunkKey(BlockPos pos) {
-        return ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4);
+        return ChunkPos.pack(pos.getX() >> 4, pos.getZ() >> 4);
     }
 }

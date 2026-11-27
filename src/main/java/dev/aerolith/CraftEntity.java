@@ -11,16 +11,18 @@ import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.LongFunction;
 
+import com.mojang.serialization.MapCodec;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtUtils;
-import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
@@ -35,6 +37,8 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.InterpolationHandler;
+import net.minecraft.world.entity.LinearInterpolationHandler;
 import net.minecraft.world.entity.ai.village.poi.PoiTypes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -44,12 +48,17 @@ import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaternionf;
+import org.joml.Quaternionfc;
 
 public final class CraftEntity extends Entity {
-    private static final EntityDataAccessor<Quaternionf> ROTATION =
+    private static final MapCodec<CompoundTag> SAVED_FIELDS = MapCodec.assumeMapUnsafe(CompoundTag.CODEC);
+    private static final EntityDataAccessor<Quaternionfc> ROTATION =
             SynchedEntityData.defineId(CraftEntity.class, EntityDataSerializers.QUATERNION);
     /** Set by the client to drop the copy of a craft's plot chunks when the craft goes away. */
     static volatile Consumer<CraftEntity> clientRelease = craft -> {};
@@ -64,8 +73,6 @@ public final class CraftEntity extends Entity {
     private CraftSections sections;
     private UUID owner;
     private boolean anchored;
-    private Vec3 lerpTarget = Vec3.ZERO;
-    private int lerpTicks;
     private long inputAt = Long.MIN_VALUE;
     private int pilotInput;
     private double throttle;
@@ -234,12 +241,12 @@ public final class CraftEntity extends Entity {
         long key = PlotGrid.chunkKey(pos);
         if (chunkKeys.add(key) && ticketed) PlotChunks.keep(plotLevel(), key);
         changed.add(pos.asLong());
-        if (old.hasBlockEntity() || now.hasBlockEntity()) propulsion.changed();
         if (old != now && (!isFluid(old) && !old.isAir() || !isFluid(now) && !now.isAir())) hullDirty = true;
     }
 
     /** What an entity feels from the fluid in this craft's plot: per fluid type, how deep it is and which way it pushes. */
-    record Touch(net.neoforged.neoforge.fluids.FluidType type, double height, Vec3 push) {}
+    record Touch(Holder<Fluid> fluid, double height, Vec3 push) {}
+    private record FluidSamples(Holder<Fluid> fluid, double[] samples) {}
 
     /** The fluid of this craft around {@code entity}; the craft's blocks are in its own frame, so the entity is carried there. */
     List<Touch> touching(Entity entity) {
@@ -259,8 +266,8 @@ public final class CraftEntity extends Entity {
             maxY = Math.max(maxY, q.y);
             maxZ = Math.max(maxZ, q.z);
         }
-        net.minecraft.world.level.BlockGetter blocks = level().isClientSide ? clientBlocks.apply(this) : plotLevel();
-        Map<net.neoforged.neoforge.fluids.FluidType, double[]> found = null;
+        net.minecraft.world.level.BlockGetter blocks = level().isClientSide() ? clientBlocks.apply(this) : plotLevel();
+        Map<net.neoforged.neoforge.fluids.FluidType, FluidSamples> found = null;
         Map<net.neoforged.neoforge.fluids.FluidType, Vec3> flows = null;
         BlockPos.MutableBlockPos at = new BlockPos.MutableBlockPos();
         for (int x = (int) Math.floor(minX + 0.5); x <= (int) Math.floor(maxX + 0.5); x++) {
@@ -279,7 +286,7 @@ public final class CraftEntity extends Entity {
                         found = new HashMap<>();
                         flows = new HashMap<>();
                     }
-                    double[] entry = found.computeIfAbsent(type, t -> new double[2]);
+                    double[] entry = found.computeIfAbsent(type, t -> new FluidSamples(fluid.typeHolder(), new double[2])).samples();
                     entry[0] = Math.max(entry[0], surface - minY);
                     if (entity.isPushedByFluid(type)) {
                         Vec3 flow = fluid.getFlow(blocks, plotPos(new BlockPos(x, y, z)));
@@ -293,10 +300,11 @@ public final class CraftEntity extends Entity {
         if (found == null) return List.of();
         List<Touch> out = new ArrayList<>(found.size());
         for (var entry : found.entrySet()) {
+            double[] samples = entry.getValue().samples();
             Vec3 push = Vec3.ZERO;
             Vec3 flow = flows.get(entry.getKey());
             if (flow != null && flow.length() > 0.0) {
-                if (entry.getValue()[1] > 0) flow = flow.scale(1.0 / entry.getValue()[1]);
+                if (samples[1] > 0) flow = flow.scale(1.0 / samples[1]);
                 if (!(entity instanceof Player)) flow = flow.normalize();
                 flow = flow.scale(entity.getFluidMotionScale(entry.getKey()));
                 Vec3 motion = entity.getDeltaMovement();
@@ -305,13 +313,13 @@ public final class CraftEntity extends Entity {
                 }
                 push = flow;
             }
-            out.add(new Touch(entry.getKey(), entry.getValue()[0], push));
+            out.add(new Touch(entry.getValue().fluid(), samples[0], push));
         }
         return out;
     }
 
     /** The fluid at a point of the world (an entity's eyes), if it lies in this craft's fluid. */
-    net.neoforged.neoforge.fluids.FluidType fluidAt(Vec3 point) {
+    Holder<Fluid> fluidAt(Vec3 point) {
         if (hull == null || cells.isEmpty()) return null;
         Vec3 q = Hull.rotate(new Quaternionf(orientation(1f)).conjugate(), point.subtract(position()));
         BlockPos offset = BlockPos.containing(q.x + 0.5, q.y + 0.5, q.z + 0.5);
@@ -320,7 +328,7 @@ public final class CraftEntity extends Entity {
         var fluid = state.getFluidState();
         BlockState above = cells.get(offset.above());
         float height = above != null && above.getFluidState().getType().isSame(fluid.getType()) ? 1f : fluid.getOwnHeight();
-        return offset.getY() - 0.5 + height > q.y ? fluid.getFluidType() : null;
+        return offset.getY() - 0.5 + height > q.y ? fluid.typeHolder() : null;
     }
 
     boolean hullDirty() {
@@ -387,7 +395,7 @@ public final class CraftEntity extends Entity {
             sections = WorldPhysics.of(server).sections;
             sections.update(this);
         }
-        if (!level().isClientSide && plotId >= 0) {
+        if (!level().isClientSide() && plotId >= 0) {
             ServerLevel plot = plotLevel();
             if (plot != null) {
                 for (long key : chunkKeys) PlotChunks.keep(plot, key);
@@ -404,7 +412,7 @@ public final class CraftEntity extends Entity {
             sections.remove(this);
             sections = null;
         }
-        if (level().isClientSide) {
+        if (level().isClientSide()) {
             clientRelease.accept(this);
         } else {
             releasePlotLoading();
@@ -425,7 +433,7 @@ public final class CraftEntity extends Entity {
     @Override
     public void remove(RemovalReason reason) {
         // A craft that is killed or discarded takes its blocks with it; one that merely unloads keeps them.
-        if (!level().isClientSide && plotId >= 0 && reason.shouldDestroy()) {
+        if (!level().isClientSide() && plotId >= 0 && reason.shouldDestroy()) {
             ServerLevel plot = plotLevel();
             Plots.unregister(this);
             if (plot != null) {
@@ -481,7 +489,7 @@ public final class CraftEntity extends Entity {
     }
 
     public Quaternionf orientation(float partialTick) {
-        return level().isClientSide
+        return level().isClientSide()
                 ? new Quaternionf(previousRotation).slerp(viewRotation, partialTick)
                 : new Quaternionf(entityData.get(ROTATION));
     }
@@ -491,7 +499,7 @@ public final class CraftEntity extends Entity {
     }
 
     boolean canEdit(Player player) {
-        return player.getUUID().equals(owner) || player.hasPermissions(2);
+        return player.getUUID().equals(owner) || player.permissions().hasPermission(net.minecraft.server.permissions.Permissions.COMMANDS_GAMEMASTER);
     }
 
     @Override
@@ -502,7 +510,7 @@ public final class CraftEntity extends Entity {
     @Override
     public void tick() {
         // Portal and vanilla fluid forces do not own the pose of a physics body.
-        if (!level().isClientSide) {
+        if (!level().isClientSide()) {
             settle();
         } else {
             if (hullDirty) {
@@ -511,13 +519,12 @@ public final class CraftEntity extends Entity {
             }
             Vec3 prior = position();
             previousRotation.set(viewRotation);
-            Quaternionf target = entityData.get(ROTATION);
-            if (lerpTicks > 0) {
+            Quaternionfc target = entityData.get(ROTATION);
+            if (isInterpolating()) {
                 // Position and rotation chase the server pose with one step, or a hull whose origin is far from its
                 // mass would show a visible gap between where it turns and where it is.
-                float step = 1.0f / lerpTicks--;
-                viewRotation.slerp(target, step);
-                setPos(position().lerp(lerpTarget, step));
+                viewRotation.set(target);
+                getInterpolation().interpolate();
             } else if (!viewRotation.equals(target, 1.0e-6f)) {
                 viewRotation.slerp(target, 0.5f);
                 reapplyPosition();
@@ -527,17 +534,12 @@ public final class CraftEntity extends Entity {
     }
 
     @Override
-    public void lerpTo(double x, double y, double z, float yaw, float pitch, int steps) {
-        lerpTarget = new Vec3(x, y, z);
+    protected InterpolationHandler createInterpolationHandler() {
         // One step, ignoring vanilla's three: showing the latest server pose and interpolating between ticks keeps a
         // fast craft where it is. Easing over three ticks made falling hulls look like they braked before landing, and
         // sink into what they were about to hit.
-        lerpTicks = 1;
+        return LinearInterpolationHandler.create(this, 1);
     }
-
-    @Override public double lerpTargetX() { return lerpTicks > 0 ? lerpTarget.x : getX(); }
-    @Override public double lerpTargetY() { return lerpTicks > 0 ? lerpTarget.y : getY(); }
-    @Override public double lerpTargetZ() { return lerpTicks > 0 ? lerpTarget.z : getZ(); }
 
     @Override
     public void setPos(double x, double y, double z) {
@@ -546,25 +548,25 @@ public final class CraftEntity extends Entity {
     }
 
     @Override
-    protected AABB makeBoundingBox() {
+    protected AABB makeBoundingBox(Vec3 position) {
         if (hull == null) {
-            return super.makeBoundingBox();
+            return super.makeBoundingBox(position);
         }
         AABB a = hull.localBounds;
-        Quaternionf q = level().isClientSide ? viewRotation : entityData.get(ROTATION);
-        double x = q.x, y = q.y, z = q.z, w = q.w;
+        Quaternionfc q = level().isClientSide() ? viewRotation : entityData.get(ROTATION);
+        double x = q.x(), y = q.y(), z = q.z(), w = q.w();
         double hx = a.getXsize() * 0.5, hy = a.getYsize() * 0.5, hz = a.getZsize() * 0.5;
         // The rows of the rotation, without their signs, say how far the half extents reach along each axis of the world.
         double ex = Math.abs(1 - 2 * (y * y + z * z)) * hx + Math.abs(2 * (x * y - w * z)) * hy + Math.abs(2 * (x * z + w * y)) * hz;
         double ey = Math.abs(2 * (x * y + w * z)) * hx + Math.abs(1 - 2 * (x * x + z * z)) * hy + Math.abs(2 * (y * z - w * x)) * hz;
         double ez = Math.abs(2 * (x * z - w * y)) * hx + Math.abs(2 * (y * z + w * x)) * hy + Math.abs(1 - 2 * (x * x + y * y)) * hz;
-        Vec3 c = Hull.rotate(q, a.getCenter()).add(position());
+        Vec3 c = Hull.rotate(q, a.getCenter()).add(position);
         return new AABB(c.x - ex, c.y - ey, c.z - ez, c.x + ex, c.y + ey, c.z + ez);
     }
 
     @Override public boolean isPickable() { return hull != null && !isRemoved(); }
-    @Override public boolean hurt(DamageSource source, float amount) { return false; }
-    @Override public boolean canChangeDimensions(Level from, Level to) { return false; }
+    @Override public boolean hurtServer(ServerLevel level, DamageSource source, float amount) { return false; }
+    @Override public boolean canTeleport(Level from, Level to) { return false; }
     @Override public boolean shouldRenderAtSqrDistance(double distanceSq) { return distanceSq < 160.0 * 160.0; }
 
     @Override
@@ -596,22 +598,26 @@ public final class CraftEntity extends Entity {
     /** A left click removes the block under the crosshair instead of damaging the craft. */
     @Override
     public boolean skipAttackInteraction(Entity attacker) {
-        if (!level().isClientSide && attacker instanceof ServerPlayer player) {
+        if (!level().isClientSide() && attacker instanceof ServerPlayer player) {
             CraftEditing.breakBlock(player, this);
         }
         return true;
     }
 
     @Override
+    public InteractionResult interact(Player player, InteractionHand hand, Vec3 location) {
+        return interact(player, hand);
+    }
+
     public InteractionResult interact(Player player, InteractionHand hand) {
-        return interact(player, hand, null);
+        return interact(player, hand, (CraftEditing.Target) null);
     }
 
     /** {@code target} is the block the client aimed at, or null to find it with the server's own ray. */
     InteractionResult interact(Player player, InteractionHand hand, CraftEditing.Target target) {
         ItemStack held = player.getItemInHand(hand);
         boolean tool = held.is(Aerolith.ASSEMBLER.get());
-        if (level().isClientSide) {
+        if (level().isClientSide()) {
             return InteractionResult.SUCCESS;
         }
         if (!(player instanceof ServerPlayer pilot) || player.isSpectator()) {
@@ -624,7 +630,7 @@ public final class CraftEntity extends Entity {
         if (held.is(Aerolith.TOW_STAFF.get())) {
             if (!pilot.isCreative()) AssemblerItem.message(pilot, "staff_creative");
             else if (anchored) AssemblerItem.message(pilot, "staff_anchored");
-            else if (WorldPhysics.of(pilot.serverLevel()).grab(this, pilot, hand)) AssemblerItem.message(pilot, "staff_hold");
+            else if (WorldPhysics.of(pilot.level()).grab(this, pilot, hand)) AssemblerItem.message(pilot, "staff_hold");
             else AssemblerItem.message(pilot, "staff_unavailable");
             return InteractionResult.CONSUME;
         }
@@ -722,7 +728,7 @@ public final class CraftEntity extends Entity {
 
     void applyNative(double[] state, int offset) {
         Vec3 prior = position();
-        Quaternionf priorRotation = entityData.get(ROTATION);
+        Quaternionfc priorRotation = entityData.get(ROTATION);
         System.arraycopy(state, offset, motion, 0, motion.length);
         entityData.set(ROTATION, motionRotation());
         setPos(motion[0], motion[1], motion[2]);
@@ -731,8 +737,6 @@ public final class CraftEntity extends Entity {
     }
 
     final CraftLoads loads = new CraftLoads();
-    /** Spinning machinery on board, from other mods, that pushes the craft. */
-    final Propulsion propulsion = new Propulsion();
     /** The last game time at which something moved against this craft. */
     long touchedAt = Long.MIN_VALUE;
     private final List<Vec3[]> pushes = new ArrayList<>();
@@ -811,31 +815,34 @@ public final class CraftEntity extends Entity {
     }
 
     @Override
-    protected void addAdditionalSaveData(CompoundTag tag) {
+    protected void addAdditionalSaveData(ValueOutput output) {
         if (unreadable != null) {
-            tag.merge(unreadable);
+            output.store(SAVED_FIELDS, unreadable);
             return;
         }
+        CompoundTag tag = new CompoundTag();
         tag.putInt("PlotId", plotId);
         tag.putLong("PlotOrigin", plotOrigin.asLong());
         tag.putLongArray("PlotChunks", chunkKeys.toLongArray());
-        tag.put("MotionSI", newDoubleList(Arrays.copyOfRange(motion, 3, motion.length)));
+        ListTag state = new ListTag();
+        for (int i = 3; i < motion.length; i++) state.add(net.minecraft.nbt.DoubleTag.valueOf(motion[i]));
+        tag.put("MotionSI", state);
         if (anchored) tag.putBoolean("Anchored", true);
         if (owner != null) {
-            tag.putUUID("Owner", owner);
+            tag.store("Owner", UUIDUtil.CODEC, owner);
         }
+        output.store(SAVED_FIELDS, tag);
     }
 
     @Override
-    protected void readAdditionalSaveData(CompoundTag tag) {
-        if (tag.hasUUID("Owner")) {
-            owner = tag.getUUID("Owner");
-        }
-        ListTag state = tag.getList("MotionSI", Tag.TAG_DOUBLE);
+    protected void readAdditionalSaveData(ValueInput input) {
+        CompoundTag tag = input.read(SAVED_FIELDS).orElseGet(CompoundTag::new);
+        owner = tag.read("Owner", UUIDUtil.CODEC).orElse(null);
+        ListTag state = tag.getListOrEmpty("MotionSI");
         if (state.size() == 10) {
             double[] saved = new double[10];
             for (int i = 0; i < saved.length; i++) {
-                saved[i] = state.getDouble(i);
+                saved[i] = state.getDoubleOr(i, Double.NaN);
             }
             double norm = new Quaternionf((float) saved[0], (float) saved[1], (float) saved[2], (float) saved[3]).lengthSquared();
             if (norm > 0.999 && norm < 1.001 && Arrays.stream(saved).allMatch(v -> Double.isFinite(v) && Math.abs(v) <= 80.0)) {
@@ -843,22 +850,25 @@ public final class CraftEntity extends Entity {
                 entityData.set(ROTATION, motionRotation());
             }
         }
-        setAnchored(tag.getBoolean("Anchored"));
+        setAnchored(tag.getBooleanOr("Anchored", false));
         if (!(level() instanceof ServerLevel server)) return;
         ServerLevel plot = Plots.level(server.getServer());
         if (plot == null) {
-            unreadable = tag.copy();
+            unreadable = new CompoundTag();
+            for (String key : List.of("Owner", "MotionSI", "Anchored", "PlotId", "PlotOrigin", "PlotChunks", "Hull")) {
+                if (tag.contains(key)) unreadable.put(key, tag.get(key).copy());
+            }
             Aerolith.LOG.warn("Cannot reach the plot dimension for Aerolith craft {}; keeping its saved data unchanged", getUUID());
             return;
         }
-        if (tag.contains("PlotId", Tag.TAG_INT)) {
-            plotId = tag.getInt("PlotId");
-            plotOrigin = tag.contains("PlotOrigin", Tag.TAG_LONG) ? BlockPos.of(tag.getLong("PlotOrigin")) : PlotGrid.origin(plotId);
-            for (long key : tag.getLongArray("PlotChunks")) chunkKeys.add(key);
+        if (tag.get("PlotId") instanceof net.minecraft.nbt.IntTag id) {
+            plotId = id.value();
+            plotOrigin = tag.getLong("PlotOrigin").map(BlockPos::of).orElseGet(() -> PlotGrid.origin(plotId));
+            for (long key : tag.getLongArray("PlotChunks").orElseGet(() -> new long[0])) chunkKeys.add(key);
             loadCells();
             buildHull();
-        } else if (tag.contains("Hull", Tag.TAG_LIST)) {
-            migrate(plot, tag.getList("Hull", Tag.TAG_COMPOUND));
+        } else if (tag.get("Hull") instanceof ListTag legacy) {
+            migrate(plot, legacy);
         }
         if (hull == null) {
             Aerolith.LOG.warn("Aerolith craft {} at {} has no solid blocks in its plot", getUUID(), position());
@@ -869,9 +879,9 @@ public final class CraftEntity extends Entity {
     private void migrate(ServerLevel plot, ListTag saved) {
         List<Plots.Moved> moved = new ArrayList<>(saved.size());
         for (int i = 0; i < saved.size(); i++) {
-            CompoundTag entry = saved.getCompound(i);
-            BlockPos offset = BlockPos.of(entry.getLong("Offset"));
-            BlockState block = NbtUtils.readBlockState(registryAccess().lookupOrThrow(Registries.BLOCK), entry.getCompound("State"));
+            CompoundTag entry = saved.getCompoundOrEmpty(i);
+            BlockPos offset = BlockPos.of(entry.getLongOr("Offset", 0));
+            BlockState block = NbtUtils.readBlockState(registryAccess().lookupOrThrow(Registries.BLOCK), entry.getCompoundOrEmpty("State"));
             if (PlotGrid.validOffset(offset) && !block.isAir()) moved.add(new Plots.Moved(offset, block, null));
         }
         if (moved.isEmpty()) return;

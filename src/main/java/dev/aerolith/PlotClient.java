@@ -2,10 +2,10 @@ package dev.aerolith;
 
 import java.util.ArrayList;
 
-import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
+import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
+import net.minecraft.world.phys.Vec3;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -46,8 +46,8 @@ final class PlotClient {
         if (client.level == null || client.getConnection() == null) return null;
         if (shadow != null && shadow.owner != client.level) shadow = null;
         if (shadow == null && create) {
-            var type = client.getConnection().registryAccess().registryOrThrow(Registries.DIMENSION_TYPE)
-                    .getHolder(ResourceKey.create(Registries.DIMENSION_TYPE, Plots.DIMENSION_ID));
+            var type = client.getConnection().registryAccess().lookupOrThrow(Registries.DIMENSION_TYPE)
+                    .get(ResourceKey.create(Registries.DIMENSION_TYPE, Plots.DIMENSION_ID));
             if (type.isEmpty()) return null;
             shadow = new PlotLevel(client, client.getConnection(), type.get());
         }
@@ -64,9 +64,8 @@ final class PlotClient {
         PlotLevel plot = level(true);
         if (craft == null || plot == null) return;
         LevelChunk chunk = plot.put(packet.chunkX(), packet.chunkZ());
-        chunk.replaceWithPacketData(packet.data().getReadBuffer(), packet.data().getHeightmaps(),
-                packet.data().getBlockEntitiesTagsConsumer(packet.chunkX(), packet.chunkZ()));
-        craft.chunkKeys().add(ChunkPos.asLong(packet.chunkX(), packet.chunkZ()));
+        chunk.replaceWithPacketData(packet.chunkX(), packet.chunkZ(), packet.data());
+        craft.chunkKeys().add(ChunkPos.pack(packet.chunkX(), packet.chunkZ()));
         if (packet.remaining() == 0) {
             craft.clientRescan(packet.origin(), plot::chunkAt);
             CraftMesh.rescan(craft);
@@ -96,7 +95,8 @@ final class PlotClient {
                 if (entity != null) {
                     entity.setBlockState(state);
                     if (entry.tag() != null && entity.getType() == BuiltInRegistries.BLOCK_ENTITY_TYPE.byId(entry.entityType())) {
-                        entity.handleUpdateTag(entry.tag(), registries);
+                        entity.handleUpdateTag(net.minecraft.world.level.storage.TagValueInput.create(
+                                net.minecraft.util.ProblemReporter.DISCARDING, registries, entry.tag()));
                     }
                 }
             }
@@ -131,31 +131,28 @@ final class PlotClient {
         if (plot != null && !plot.isEmpty()) plot.tickEntities();
     }
 
-    // ---- drawing
-
-    /** Draws every block, fluid and block entity of {@code craft}; false if its chunks have not arrived. */
-    static boolean render(CraftEntity craft, float partialTick, PoseStack pose, MultiBufferSource buffers) {
-        PlotLevel plot = level(false);
-        if (plot == null || craft.hull() == null) return false;
-        Minecraft client = Minecraft.getInstance();
-        CraftMesh.draw(craft, plot, pose);
+    static java.util.List<BlockEntityRenderState> extractBlockEntities(CraftEntity craft, PlotLevel plot, float partialTick) {
+        var client = Minecraft.getInstance();
+        var dispatcher = client.getBlockEntityRenderDispatcher();
+        var states = new ArrayList<BlockEntityRenderState>();
         plot.view(craft);
-        BlockPos origin = craft.plotOrigin();
+        Vec3 camera = PlotGrid.toPlot(craft.plotOrigin(), Hull.rotate(craft.orientation(partialTick).conjugate(),
+                client.gameRenderer.mainCamera().position().subtract(craft.getPosition(partialTick))));
         for (long key : craft.chunkKeys()) {
             LevelChunk chunk = plot.chunkAt(key);
             if (chunk == null) continue;
-            if (chunk.getBlockEntities().isEmpty()) continue;
-            for (BlockEntity entity : new ArrayList<>(chunk.getBlockEntities().values())) {
-                var renderer = client.getBlockEntityRenderDispatcher().getRenderer(entity);
-                if (renderer == null) continue;
-                BlockPos offset = entity.getBlockPos().subtract(origin);
-                pose.pushPose();
-                // Block entity renderers draw from the block's corner, like block models, so the same half-block shift applies.
-                pose.translate(offset.getX() - 0.5, offset.getY() - 0.5, offset.getZ() - 0.5);
-                renderer.render(entity, partialTick, pose, buffers, plot.light(entity.getBlockPos()), OverlayTexture.NO_OVERLAY);
-                pose.popPose();
+            for (BlockEntity entity : chunk.getBlockEntities().values()) {
+                var renderer = dispatcher.getRenderer(entity);
+                if (renderer != null && renderer.shouldRender(entity, camera)) states.add(extract(renderer, entity, partialTick, camera));
             }
         }
-        return true;
+        return states;
+    }
+
+    private static <S extends BlockEntityRenderState> S extract(BlockEntityRenderer<BlockEntity, S> renderer,
+            BlockEntity entity, float partialTick, Vec3 camera) {
+        S state = renderer.createRenderState();
+        renderer.extractRenderState(entity, state, partialTick, camera, null);
+        return state;
     }
 }

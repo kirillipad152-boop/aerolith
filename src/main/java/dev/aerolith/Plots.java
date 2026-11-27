@@ -4,15 +4,19 @@ import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.io.IOException;
+import java.nio.file.Files;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
-import net.minecraft.core.HolderLookup;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.gametest.framework.GameTestServer;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtAccounter;
+import net.minecraft.nbt.NbtIo;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
@@ -29,6 +33,11 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.saveddata.SavedData;
+import net.minecraft.world.level.saveddata.SavedDataType;
+import net.minecraft.world.level.storage.LevelResource;
+import net.minecraft.world.level.storage.TagValueInput;
+import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.util.ProblemReporter;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -45,8 +54,8 @@ import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 @EventBusSubscriber(modid = Aerolith.ID)
 public final class Plots {
     static final ResourceKey<Level> DIMENSION = ResourceKey.create(Registries.DIMENSION,
-            ResourceLocation.fromNamespaceAndPath(Aerolith.ID, "plot"));
-    static final ResourceLocation DIMENSION_ID = DIMENSION.location();
+            Identifier.fromNamespaceAndPath(Aerolith.ID, "plot"));
+    static final Identifier DIMENSION_ID = DIMENSION.identifier();
     private static final String TNT_CRAFT = "AerolithTntCraft";
     /** Plot writes keep neighbours untouched so a block keeps exactly the state it had. */
     static final int QUIET = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS;
@@ -72,21 +81,43 @@ public final class Plots {
     private static final class Store extends SavedData {
         final BitSet used = new BitSet();
 
-        static Store load(CompoundTag tag, HolderLookup.Provider registries) {
+        static Store load(CompoundTag tag) {
             Store store = new Store();
-            store.used.or(BitSet.valueOf(tag.getLongArray("Used")));
+            store.used.or(BitSet.valueOf(tag.getLongArray("Used").orElseThrow()));
             return store;
         }
 
-        @Override
-        public CompoundTag save(CompoundTag tag, HolderLookup.Provider registries) {
+        CompoundTag save() {
+            CompoundTag tag = new CompoundTag();
             tag.putLongArray("Used", used.toLongArray());
             return tag;
         }
     }
 
+    private static final SavedDataType<Store> STORE = new SavedDataType<>(Identifier.fromNamespaceAndPath(Aerolith.ID, "plots"),
+            Store::new, CompoundTag.CODEC.xmap(Store::load, Store::save), null);
+
     private static Store store(ServerLevel plot) {
-        return plot.getDataStorage().computeIfAbsent(new SavedData.Factory<>(Store::new, Store::load, null), "aerolith_plots");
+        var storage = plot.getDataStorage();
+        Store existing = storage.get(STORE);
+        if (existing != null) return existing;
+        var root = plot.getServer().getWorldPath(LevelResource.ROOT);
+        var folder = DimensionType.getStorageFolder(plot.dimension(), root).resolve("data");
+        if (!Files.notExists(folder.resolve("aerolith/plots.dat"))) {
+            throw new IllegalStateException("Unreadable Aerolith plot allocation data; refusing to reuse plots");
+        }
+        var legacy = folder.resolve("aerolith_plots.dat");
+        if (!Files.notExists(legacy)) {
+            try {
+                Store migrated = Store.load(NbtIo.readCompressed(legacy, NbtAccounter.create(4L << 20)).getCompoundOrEmpty("data"));
+                storage.set(STORE, migrated);
+                migrated.setDirty();
+                return migrated;
+            } catch (IOException | RuntimeException failure) {
+                throw new IllegalStateException("Unreadable legacy Aerolith plot allocation data; refusing to reuse plots", failure);
+            }
+        }
+        return storage.computeIfAbsent(STORE);
     }
 
     static int allocate(ServerLevel plot) {
@@ -169,7 +200,7 @@ public final class Plots {
                 if (moved.entity() != null) {
                     BlockEntity entity = plot.getBlockEntity(pos);
                     if (entity != null) {
-                        entity.loadWithComponents(moved.entity(), plot.registryAccess());
+                        entity.loadWithComponents(TagValueInput.create(ProblemReporter.DISCARDING, plot.registryAccess(), moved.entity()));
                         entity.setChanged();
                     }
                 }
@@ -207,7 +238,7 @@ public final class Plots {
             copy.setFuse(tnt.getFuse());
             copy.setBlockState(tnt.getBlockState());
             copy.setDeltaMovement(craft.velocityAt(center).scale(0.05).add(Hull.rotate(craft.orientation(1f), tnt.getDeltaMovement())));
-            copy.getPersistentData().putUUID(TNT_CRAFT, craft.getUUID());
+            copy.getPersistentData().store(TNT_CRAFT, UUIDUtil.CODEC, craft.getUUID());
             craft.level().addFreshEntity(copy);
         } else if (entity instanceof ItemEntity item) {
             ItemEntity copy = new ItemEntity(craft.level(), world.x, world.y, world.z, item.getItem().copy());
@@ -222,11 +253,12 @@ public final class Plots {
     @SubscribeEvent
     public static void detonate(ExplosionEvent.Detonate event) {
         var blast = event.getExplosion();
-        if (!(event.getLevel() instanceof ServerLevel world) || !blast.interactsWithBlocks()
-                || !(blast.getDirectSourceEntity() instanceof PrimedTnt tnt) || !tnt.getPersistentData().hasUUID(TNT_CRAFT)) return;
+        if (!(event.getLevel() instanceof ServerLevel world) || blast.getBlockInteraction() == net.minecraft.world.level.Explosion.BlockInteraction.KEEP
+                || !(blast.getDirectSourceEntity() instanceof PrimedTnt tnt)) return;
         ServerLevel plot = level(world.getServer());
         if (plot == null || world == plot && inGrid(BlockPos.containing(blast.center()))) return;
-        if (!(world.getEntity(tnt.getPersistentData().getUUID(TNT_CRAFT)) instanceof CraftEntity craft)
+        var id = tnt.getPersistentData().read(TNT_CRAFT, UUIDUtil.CODEC).orElse(null);
+        if (id == null || !(world.getEntity(id) instanceof CraftEntity craft)
                 || craft.isRemoved() || craft.hull() == null || craft.plotId() < 0) return;
         float radius = Math.min(blast.radius(), 4f);
         Vec3 local = HullCollisions.localPoint(craft, blast.center());
@@ -283,12 +315,12 @@ public final class Plots {
     }
 
     /** Level events (door sounds, breaking particles, smoke) of the plot are replayed in the craft's world. */
-    public static boolean levelEvent(ServerLevel level, Player player, int type, BlockPos pos, int data) {
+    public static boolean levelEvent(ServerLevel level, net.minecraft.world.entity.Entity source, int type, BlockPos pos, int data) {
         if (LOADED.isEmpty() || !isPlot(level)) return false;
         CraftEntity craft = craftAt(pos);
         if (craft == null) return false;
         // A player breaking a block gets its own effects drawn at the exact place; do not show them twice.
-        if (type == 2001 && player != null) return true;
+        if (type == 2001 && source instanceof Player) return true;
         BlockPos at = BlockPos.containing(craft.worldPoint(Vec3.atCenterOf(pos)));
         ((ServerLevel) craft.level()).levelEvent(null, type, at, data);
         return true;
@@ -299,7 +331,7 @@ public final class Plots {
      * far from where it appears, so the question is answered for the craft's block in the world. Null leaves vanilla's answer.
      */
     public static Boolean reach(Player player, BlockPos pos, double extra) {
-        if (LOADED.isEmpty() || player.level().isClientSide || PlotGrid.idAt(pos) < 0 || isPlot(player.level())) return null;
+        if (LOADED.isEmpty() || player.level().isClientSide() || PlotGrid.idAt(pos) < 0 || isPlot(player.level())) return null;
         CraftEntity craft = craftAt(pos);
         if (craft == null) return null;
         double range = player.blockInteractionRange() + extra;

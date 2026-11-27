@@ -40,7 +40,7 @@ final class CraftSections {
         }
         for (int x = next.x0; x <= next.x1; x++) {
             for (int z = next.z0; z <= next.z1; z++) {
-                byColumn.computeIfAbsent(ChunkPos.asLong(x, z), key -> new ObjectOpenHashSet<>()).add(craft);
+                byColumn.computeIfAbsent(ChunkPos.pack(x, z), key -> new ObjectOpenHashSet<>()).add(craft);
             }
         }
     }
@@ -54,7 +54,7 @@ final class CraftSections {
         }
         for (int x = old.x0; x <= old.x1; x++) {
             for (int z = old.z0; z <= old.z1; z++) {
-                long key = ChunkPos.asLong(x, z);
+                long key = ChunkPos.pack(x, z);
                 Set<CraftEntity> section = byColumn.get(key);
                 section.remove(craft);
                 if (section.isEmpty()) byColumn.remove(key);
@@ -70,7 +70,7 @@ final class CraftSections {
         }
         for (int x = query.x0; x <= query.x1; x++) {
             for (int z = query.z0; z <= query.z1; z++) {
-                Set<CraftEntity> section = byColumn.get(ChunkPos.asLong(x, z));
+                Set<CraftEntity> section = byColumn.get(ChunkPos.pack(x, z));
                 if (section != null) {
                     for (CraftEntity craft : section) if (hit.test(craft)) return true;
                 }

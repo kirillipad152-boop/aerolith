@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  */
 @Mixin(Player.class)
 abstract class PlayerReachMixin {
-    @Inject(method = "canInteractWithBlock", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "isWithinBlockInteractionRange", at = @At("HEAD"), cancellable = true)
     private void aerolith$craftBlocks(BlockPos pos, double extra, CallbackInfoReturnable<Boolean> callback) {
         Boolean reach = Plots.reach((Player) (Object) this, pos, extra);
         if (reach != null) callback.setReturnValue(reach);

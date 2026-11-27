@@ -186,7 +186,7 @@ public final class WorldPhysics {
 
     /** The server picks the grip point; no position or force is taken from the client packet. */
     boolean grab(CraftEntity craft, ServerPlayer player, InteractionHand hand) {
-        if (hand != InteractionHand.MAIN_HAND || player.serverLevel() != level || !player.isCreative()
+        if (hand != InteractionHand.MAIN_HAND || player.level() != level || !player.isCreative()
                 || !player.getMainHandItem().is(Aerolith.TOW_STAFF.get()) || !craft.canEdit(player) || player.isUsingItem()
                 || player.isPassenger() || craft.isVehicle() || !isSimulated(craft) || craft.loads.supports(player)) return false;
         Body body = crafts.get(craft);
@@ -248,7 +248,7 @@ public final class WorldPhysics {
         Grab grab = body.grab;
         if (grab == null) return;
         ServerPlayer player = grab.player();
-        if (!simulated || player.isRemoved() || !player.isAlive() || player.serverLevel() != level || !player.isCreative()
+        if (!simulated || player.isRemoved() || !player.isAlive() || player.level() != level || !player.isCreative()
                 || !player.isUsingItem() || player.getUseItem() != grab.staff() || player.getMainHandItem() != grab.staff()
                 || !craft.canEdit(player) || player.isPassenger() || craft.isVehicle() || craft.loads.supports(player)) {
             release(body);
@@ -328,7 +328,6 @@ public final class WorldPhysics {
                 craft.applyPilot(world, body.id);
                 craft.loads.apply(craft, world, body.id, body.asleep);
                 craft.applyPushes(world, body.id);
-                craft.propulsion.apply(craft, world, body.id, now);
             }
             if (body.grab != null) pull(craft, body, body.id != 0 && body.active);
         }
@@ -370,15 +369,15 @@ public final class WorldPhysics {
         WorldBorder border = level.getWorldBorder();
         if (minX < border.getMinX() || maxX > border.getMaxX() || minZ < border.getMinZ() || maxZ > border.getMaxZ()) return false;
         // Terrain tiles are clipped vertically below; a wide raft near bedrock must not be frozen by its horizontal reach.
-        if (c.y < level.getMinBuildHeight() - 24 || c.y > level.getMaxBuildHeight() + 128) return false;
+        if (c.y < level.getMinY() - 24 || c.y > level.getMaxY() + 129) return false;
         int x1 = Mth.floor(minX), x2 = Mth.floor(maxX), z1 = Mth.floor(minZ), z2 = Mth.floor(maxZ);
         for (int cz = z1 >> 4; cz <= z2 >> 4; cz++) {
             for (int cx = x1 >> 4; cx <= x2 >> 4; cx++) {
                 if (level.getChunkSource().getChunkNow(cx, cz) == null) return false;
             }
         }
-        int y1 = Math.max(level.getMinBuildHeight(), Mth.floor(minY));
-        int y2 = Math.min(level.getMaxBuildHeight() - 1, Mth.floor(maxY));
+        int y1 = Math.max(level.getMinY(), Mth.floor(minY));
+        int y2 = Math.min(level.getMaxY(), Mth.floor(maxY));
         claim(body, y1 > y2 ? null : new Terrain.Range(tile(x1), tile(y1), tile(z1), tile(x2), tile(y2), tile(z2)));
         return true;
     }
@@ -399,7 +398,7 @@ public final class WorldPhysics {
     private void fail(Throwable failure) {
         failed = true;
         failedAt = level.getGameTime();
-        Aerolith.LOG.error("Aerolith physics stopped in {}; craft entities and saved blocks are kept{}", level.dimension().location(),
+        Aerolith.LOG.error("Aerolith physics stopped in {}; craft entities and saved blocks are kept{}", level.dimension().identifier(),
                 restarts < MAX_RESTARTS ? ", restarting in 5 seconds" : ", giving up after repeated failures", failure);
         close();
         // The native world is gone, so every craft must be registered again when it comes back.
@@ -412,7 +411,7 @@ public final class WorldPhysics {
         bodies.clear();
         terrain.reset();
         for (var player : level.players()) {
-            if (player.hasPermissions(2)) {
+            if (player.permissions().hasPermission(net.minecraft.server.permissions.Permissions.COMMANDS_GAMEMASTER)) {
                 player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("message.aerolith.physics_failed"));
             }
         }

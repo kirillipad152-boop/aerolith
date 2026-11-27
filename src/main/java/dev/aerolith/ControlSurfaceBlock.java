@@ -1,6 +1,5 @@
 package dev.aerolith;
 
-import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionResult;
@@ -28,7 +27,6 @@ final class ControlSurfaceBlock extends Block {
     static final int ELEVATOR = 3, RUDDER = 4, AILERON = 5, FLAP = 6;
     /** The axis its normal lies on: Y is a flat surface, X an upright one. The chord is always Z. */
     static final EnumProperty<Direction.Axis> NORMAL = EnumProperty.create("normal", Direction.Axis.class, Direction.Axis.X, Direction.Axis.Y);
-    private static final MapCodec<ControlSurfaceBlock> CODEC = simpleCodec(properties -> new ControlSurfaceBlock(properties, FLAP));
     private static final VoxelShape FLAT = box(0, 7, 0, 16, 9, 16);
     private static final VoxelShape UPRIGHT = box(7, 0, 0, 9, 16, 16);
 
@@ -50,11 +48,6 @@ final class ControlSurfaceBlock extends Block {
     }
 
     @Override
-    protected MapCodec<ControlSurfaceBlock> codec() {
-        return CODEC;
-    }
-
-    @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
         builder.add(NORMAL);
     }
@@ -73,10 +66,10 @@ final class ControlSurfaceBlock extends Block {
     @Override
     protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (!player.getAbilities().mayBuild) return InteractionResult.PASS;
-        if (!level.isClientSide) {
+        if (!level.isClientSide()) {
             Direction.Axis turned = state.getValue(NORMAL) == Direction.Axis.X ? Direction.Axis.Y : Direction.Axis.X;
             level.setBlock(pos, state.setValue(NORMAL, turned), Block.UPDATE_ALL);
         }
-        return InteractionResult.sidedSuccess(level.isClientSide);
+        return InteractionResult.SUCCESS;
     }
 }

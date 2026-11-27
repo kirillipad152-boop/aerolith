@@ -2,10 +2,10 @@ package dev.aerolith;
 
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.item.CreativeModeTabs;
-import net.minecraft.world.item.Item;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -24,18 +24,19 @@ public final class Aerolith {
     private static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(ID);
     private static final DeferredRegister<EntityType<?>> ENTITIES = DeferredRegister.create(Registries.ENTITY_TYPE, ID);
     public static final DeferredItem<AssemblerItem> ASSEMBLER =
-            ITEMS.register("assembler", () -> new AssemblerItem(new Item.Properties().stacksTo(1)));
+            ITEMS.registerItem("assembler", AssemblerItem::new, props -> props.stacksTo(1));
     public static final DeferredItem<TowStaffItem> TOW_STAFF =
-            ITEMS.register("tow_staff", () -> new TowStaffItem(new Item.Properties().stacksTo(1)));
+            ITEMS.registerItem("tow_staff", TowStaffItem::new, props -> props.stacksTo(1));
     public static final DeferredHolder<EntityType<?>, EntityType<CraftEntity>> CRAFT =
-            ENTITIES.register("craft", () -> EntityType.Builder.<CraftEntity>of(CraftEntity::new, MobCategory.MISC)
-                    .sized(1.0f, 1.0f).clientTrackingRange(10).updateInterval(1).build(ID + ":craft"));
+            ENTITIES.register("craft", id -> EntityType.Builder.<CraftEntity>of(CraftEntity::new, MobCategory.MISC)
+                    .sized(1.0f, 1.0f).clientTrackingRange(10).updateInterval(1).build(ResourceKey.create(Registries.ENTITY_TYPE, id)));
 
     public Aerolith(IEventBus modBus, ModContainer container) {
         ITEMS.register(modBus);
         ENTITIES.register(modBus);
         AerolithParts.register(modBus);
-        container.registerConfig(ModConfig.Type.SERVER, FrictionConfig.SPEC);
+        GameTests.register(modBus);
+        container.registerConfig(ModConfig.Type.SYNCED, FrictionConfig.SPEC, "aerolith-server.toml");
         modBus.addListener(Aerolith::creativeTab);
         modBus.addListener(AerolithParts::creativeTab);
         modBus.addListener(PilotInput::register);

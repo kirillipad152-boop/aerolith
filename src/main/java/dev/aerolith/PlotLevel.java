@@ -6,8 +6,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ClientPacketListener;
-import net.minecraft.client.renderer.LevelRenderer;
-import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
@@ -32,13 +31,13 @@ final class PlotLevel extends ClientLevel {
 
     PlotLevel(Minecraft client, ClientPacketListener connection, Holder<DimensionType> type) {
         super(connection, new ClientLevelData(Difficulty.NORMAL, false, true), Plots.DIMENSION, type, 2, 2,
-                client::getProfiler, client.levelRenderer, false, 0L);
+                client.levelExtractor, false, 0L, client.level.getSeaLevel());
         this.owner = client.level;
     }
 
     LevelChunk put(int x, int z) {
         LevelChunk chunk = new LevelChunk(this, new ChunkPos(x, z));
-        LevelChunk old = plotChunks.put(ChunkPos.asLong(x, z), chunk);
+        LevelChunk old = plotChunks.put(ChunkPos.pack(x, z), chunk);
         if (old != null) old.clearAllBlockEntities();
         return chunk;
     }
@@ -48,7 +47,7 @@ final class PlotLevel extends ClientLevel {
     }
 
     LevelChunk chunkAt(BlockPos pos) {
-        return plotChunks.get(ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4));
+        return plotChunks.get(ChunkPos.pack(pos.getX() >> 4, pos.getZ() >> 4));
     }
 
     void drop(long key) {
@@ -62,7 +61,7 @@ final class PlotLevel extends ClientLevel {
 
     @Override
     public ChunkAccess getChunk(int x, int z, ChunkStatus status, boolean load) {
-        LevelChunk chunk = plotChunks.get(ChunkPos.asLong(x, z));
+        LevelChunk chunk = plotChunks.get(ChunkPos.pack(x, z));
         return chunk != null ? chunk : super.getChunk(x, z, status, load);
     }
 
@@ -83,25 +82,25 @@ final class PlotLevel extends ClientLevel {
     }
 
     int light(long plotPos) {
-        if (viewed == null) return LightTexture.pack(0, 15);
+        if (viewed == null) return LightCoordsUtil.pack(0, 15);
         return lightByPos.computeIfAbsent(plotPos, key -> {
             ClientLevel world = owner;
             BlockPos center = BlockPos.containing(viewed.worldPoint(Vec3.atCenterOf(BlockPos.of(key))));
-            int light = LevelRenderer.getLightColor(world, center);
-            int block = LightTexture.block(light);
-            int sky = LightTexture.sky(light);
+            int light = LightCoordsUtil.getLightCoords(world, center);
+            int block = LightCoordsUtil.block(light);
+            int sky = LightCoordsUtil.sky(light);
             for (Direction face : Direction.values()) {
-                light = LevelRenderer.getLightColor(world, center.relative(face));
-                block = Math.max(block, LightTexture.block(light));
-                sky = Math.max(sky, LightTexture.sky(light));
+                light = LightCoordsUtil.getLightCoords(world, center.relative(face));
+                block = Math.max(block, LightCoordsUtil.block(light));
+                sky = Math.max(sky, LightCoordsUtil.sky(light));
             }
-            return LightTexture.pack(block, sky);
+            return LightCoordsUtil.pack(block, sky);
         });
     }
 
     @Override
     public int getBrightness(LightLayer layer, BlockPos pos) {
         int light = light(pos);
-        return layer == LightLayer.SKY ? LightTexture.sky(light) : LightTexture.block(light);
+        return layer == LightLayer.SKY ? LightCoordsUtil.sky(light) : LightCoordsUtil.block(light);
     }
 }

@@ -2,15 +2,9 @@
   "type": "minecraft:crafting_shapeless",
   "category": "building",
   "ingredients": [
-    {
-      "item": "aerolith:wing"
-    },
-    {
-      "item": "minecraft:iron_nugget"
-    },
-    {
-      "item": "minecraft:orange_dye"
-    }
+    "aerolith:wing",
+    "minecraft:iron_nugget",
+    "minecraft:orange_dye"
   ],
   "result": {
     "id": "aerolith:elevator",

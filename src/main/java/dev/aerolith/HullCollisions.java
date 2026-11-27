@@ -199,7 +199,7 @@ public final class HullCollisions {
         if (strength < 0.05) return;
         Vec3 contact = new Vec3(box.getCenter().x, box.minY + 0.4, box.getCenter().z).subtract(wall.scale(entity.getBbWidth() * 0.5));
         Vec3 direction = wall.scale(-1);
-        if (entity.level().isClientSide) {
+        if (entity.level().isClientSide()) {
             if (entity instanceof net.minecraft.world.entity.player.Player p && p.isLocalPlayer()) {
                 pushSink.push(craft, contact, direction, strength);
             }
@@ -306,7 +306,7 @@ public final class HullCollisions {
         AABB region = before.worldBounds(local).minmax(craft.getBoundingBox()).inflate(angularTravel + SUPPORT_DISTANCE + EPS);
         // On the client only the local player is moved here; other entities arrive from the server already carried.
         List<Entity> nearby = entitiesNear(craft, region, entity -> eligible(entity)
-                && (!craft.level().isClientSide || entity instanceof net.minecraft.world.entity.player.Player p && p.isLocalPlayer()));
+                && (!craft.level().isClientSide() || entity instanceof net.minecraft.world.entity.player.Player p && p.isLocalPlayer()));
         if (nearby.isEmpty()) return;
 
         for (int step = 1; step <= steps; step++) {
@@ -355,14 +355,14 @@ public final class HullCollisions {
         AABB end = start.move(accepted);
         if (overlapAt(end, after, boxes) != null && overlapAt(start, after, boxes) == null) return;
         entity.setPos(entity.position().add(accepted));
-        if (!entity.level().isClientSide) entity.hasImpulse = true;
+        if (!entity.level().isClientSide()) entity.needsSync = true;
         if (supported && isFloor(hitPose(new Sweep(end, probe.motion), after, boxes, null))) entity.setOnGround(true);
     }
 
     private static Vec3 safeCarry(Entity entity, Sweep path, CraftEntity craft, Hit ownHull) {
         if (negligible(path.motion)) return Vec3.ZERO;
         AABB swept = path.bounds;
-        if (!entity.level().isClientSide && !entity.level().hasChunksAt(BlockPos.containing(swept.minX, swept.minY, swept.minZ),
+        if (!entity.level().isClientSide() && !entity.level().hasChunksAt(BlockPos.containing(swept.minX, swept.minY, swept.minZ),
                 BlockPos.containing(swept.maxX, swept.maxY, swept.maxZ))) return Vec3.ZERO;
         Hit hit = earlier(ownHull, earlier(hitWorld(entity, path), hitCrafts(entity, path, craft)));
         return hit == null ? path.motion : beforeContact(path.motion, hit);

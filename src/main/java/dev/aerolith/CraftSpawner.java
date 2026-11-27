@@ -5,7 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -66,7 +66,7 @@ final class CraftSpawner {
         first = BlockPos.containing(source.getPosition()).above().relative(ahead, DISTANCE);
         rows = Math.ceilDiv(SPREAD, along(ahead) + 1);
         columns = Math.ceilDiv(SPREAD, along(ahead.getClockWise()) + 1);
-        layers = Math.max(0, (level.getMaxBuildHeight() - first.getY()) / (size.getY() + 1));
+        layers = Math.max(0, (level.getMaxY() + 1 - first.getY()) / (size.getY() + 1));
     }
 
     /** Starts spawning; the number of crafts asked for, or 0 if it cannot be done. */

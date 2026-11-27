@@ -155,7 +155,7 @@ final class StructureTransfer {
             return null;
         }
         for (Change removal : removals) {
-            if (NeoForge.EVENT_BUS.post(new BlockEvent.BreakEvent(level, removal.pos, removal.before, player)).isCanceled()) {
+            if (NeoForge.EVENT_BUS.post(new net.neoforged.neoforge.event.level.block.BreakBlockEvent(level, removal.pos, removal.before, player)).isCanceled()) {
                 AssemblerItem.at(player, "permission", removal.pos);
                 return null;
             }
@@ -164,7 +164,7 @@ final class StructureTransfer {
             AssemblerItem.message(player, "failed");
             return null;
         }
-        CraftEntity craft = Aerolith.CRAFT.get().create(level);
+        CraftEntity craft = Aerolith.CRAFT.get().create(level, net.minecraft.world.entity.EntitySpawnReason.TRIGGERED);
         if (craft == null) {
             AssemblerItem.message(player, "failed");
             return null;
@@ -190,7 +190,7 @@ final class StructureTransfer {
     static CraftEntity create(ServerLevel level, List<CraftBlock> blocks, Vec3 origin, java.util.UUID owner) {
         ServerLevel plot = Plots.level(level.getServer());
         WorldPhysics physics = WorldPhysics.of(level);
-        CraftEntity craft = Aerolith.CRAFT.get().create(level);
+        CraftEntity craft = Aerolith.CRAFT.get().create(level, net.minecraft.world.entity.EntitySpawnReason.TRIGGERED);
         if (plot == null || craft == null || !physics.hasSpace() || !physics.ready()) return null;
         int id = Plots.allocate(plot);
         BlockPos plotOrigin = PlotGrid.origin(id, blocks.stream().map(CraftBlock::offset).toList());
@@ -301,7 +301,8 @@ final class StructureTransfer {
     private static void load(ServerLevel level, BlockPos pos, CompoundTag tag) {
         BlockEntity entity = level.getBlockEntity(pos);
         if (entity != null) {
-            entity.loadWithComponents(tag, level.registryAccess());
+            entity.loadWithComponents(net.minecraft.world.level.storage.TagValueInput.create(
+                    net.minecraft.util.ProblemReporter.DISCARDING, level.registryAccess(), tag));
             entity.setChanged();
         }
     }

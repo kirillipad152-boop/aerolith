@@ -7,12 +7,14 @@ import java.util.UUID;
 import com.mojang.authlib.GameProfile;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.level.storage.TagValueInput;
+import net.minecraft.world.level.storage.TagValueOutput;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.item.PrimedTnt;
 import net.minecraft.world.item.ItemStack;
@@ -30,13 +32,18 @@ import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.common.util.FakePlayer;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
-@GameTestHolder(Aerolith.ID)
-@PrefixGameTestTemplate(false)
 public final class AerolithGameTests {
-    @GameTest(template = "test_pad", timeoutTicks = 120)
+    private static CompoundTag save(CraftEntity craft) {
+        var output = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, craft.registryAccess());
+        craft.saveWithoutId(output);
+        return output.buildResult();
+    }
+
+    private static void load(CraftEntity craft, CompoundTag tag) {
+        craft.load(TagValueInput.create(ProblemReporter.DISCARDING, craft.registryAccess(), tag));
+    }
+
     public static void assembleLandSaveAndDock(GameTestHelper test) {
         ServerLevel level = test.getLevel();
         ServerPlayer player = editor(level);
@@ -47,20 +54,27 @@ public final class AerolithGameTests {
         BlockPos high = low.above();
         BlockState log = Blocks.OAK_LOG.defaultBlockState().setValue(RotatedPillarBlock.AXIS, Direction.Axis.X);
         test.setBlock(low, log);
-        test.setBlock(high, Blocks.RED_WOOL);
+        test.setBlock(high, Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.RED));
         CraftEntity craft = assembleWithTool(test, player, low, high);
         test.assertBlockPresent(Blocks.AIR, low);
         test.assertBlockPresent(Blocks.AIR, high);
-        double floorTop = test.absolutePos(new BlockPos(4, 1, 4)).getY() + 0.5;
+        BlockPos floorAt = test.absolutePos(new BlockPos(4, 1, 4));
+        double floorTop = floorAt.getY() + 0.5;
 
         test.startSequence().thenWaitUntil(() -> {
-            test.assertTrue(Math.abs(craft.getY() - (floorTop + 0.5)) < 0.08, "Hull did not rest on the half-height slab");
+            test.assertTrue(Math.abs(craft.getY() - (floorTop + 0.5)) < 0.08,
+                    "Hull did not rest on the half-height slab: y=" + craft.getY() + ", expected=" + (floorTop + 0.5)
+                            + ", speed=" + craft.speed() + ", simulated=" + WorldPhysics.of(level).isSimulated(craft)
+                            + ", actual bounds=" + craft.getBoundingBox() + ", floor=" + floorAt
+                            + ", " + level.getBlockState(floorAt)
+                            + ", slab shape=" + level.getBlockState(floorAt).getCollisionShape(level, floorAt).toAabbs()
+                            + ", hull=" + craft.hull().localBounds + ", rotation=" + craft.orientation(1));
             test.assertTrue(craft.speed() < 0.25 && craft.spin() < 0.3, "Hull did not settle");
         }).thenExecute(() -> {
-            CompoundTag saved = craft.saveWithoutId(new CompoundTag());
-            CraftEntity restored = Aerolith.CRAFT.get().create(level);
+            CompoundTag saved = save(craft);
+            CraftEntity restored = Aerolith.CRAFT.get().create(level, net.minecraft.world.entity.EntitySpawnReason.TRIGGERED);
             test.assertTrue(restored != null, "Cannot recreate a hull");
-            restored.load(saved);
+            load(restored, saved);
             test.assertTrue(java.util.Set.copyOf(restored.blocks()).equals(java.util.Set.copyOf(craft.blocks())) && restored.canEdit(player)
                     && restored.position().distanceToSqr(craft.position()) < 0.000001, "Hull state was not saved losslessly");
 
@@ -72,14 +86,13 @@ public final class AerolithGameTests {
             test.assertTrue(StructureTransfer.dock(level, player, craft) && craft.isRemoved(),
                     "Stopped hull did not dock at " + dock + " with reference y=" + craft.getY()
                             + ", speed=" + craft.speed() + ", spin=" + craft.spin());
-            test.assertTrue(level.getBlockState(dock) == log && level.getBlockState(dock.above()).is(Blocks.RED_WOOL),
+            test.assertTrue(level.getBlockState(dock) == log && level.getBlockState(dock.above()).is(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.RED)),
                     "Docking did not preserve exact blocks and state");
         }).thenSucceed();
     }
 
-    @GameTest(template = "test_pad")
     public static void storageKeepsItsItemsThroughAssemblingAndDocking(GameTestHelper test) {
-        test.assertTrue(test.getLevel().getRecipeManager().byKey(ResourceLocation.fromNamespaceAndPath(Aerolith.ID, "assembler")).isPresent(),
+        test.assertTrue(test.getLevel().getServer().getRecipeManager().byKey(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.RECIPE, Identifier.fromNamespaceAndPath(Aerolith.ID, "assembler"))).isPresent(),
                 "The survival crafting recipe is missing");
         var level = test.getLevel();
         ServerPlayer player = editor(level);
@@ -105,7 +118,6 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void partialHullVolumeGeometryAndMaterials(GameTestHelper test) {
         var level = test.getLevel();
         ServerPlayer player = editor(level);
@@ -135,14 +147,13 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void newPartsAndLegacyMarkers(GameTestHelper test) {
         for (String part : List.of("pilot_seat", "thruster", "wing")) {
-            test.assertTrue(test.getLevel().getRecipeManager().byKey(ResourceLocation.fromNamespaceAndPath(Aerolith.ID, part)).isPresent(),
+            test.assertTrue(test.getLevel().getServer().getRecipeManager().byKey(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.RECIPE, Identifier.fromNamespaceAndPath(Aerolith.ID, part))).isPresent(),
                     "Missing survival recipe for " + part);
         }
-        Hull legacy = new Hull(List.of(new CraftBlock(BlockPos.ZERO, Blocks.ORANGE_WOOL.defaultBlockState()),
-                new CraftBlock(BlockPos.ZERO.above(), Blocks.RED_WOOL.defaultBlockState())));
+        Hull legacy = new Hull(List.of(new CraftBlock(BlockPos.ZERO, Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.ORANGE).defaultBlockState()),
+                new CraftBlock(BlockPos.ZERO.above(), Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.RED).defaultBlockState())));
         test.assertTrue(legacy.powered && legacy.seat != null, "Old wool craft lost power or seat");
         Hull wing = new Hull(List.of(new CraftBlock(BlockPos.ZERO, AerolithParts.WING.get().defaultBlockState())));
         test.assertTrue(Math.abs(wing.mass - 20.0) < 1e-7 && wing.surfaces.length == 8 && wing.surfaces[0] == 1,
@@ -163,7 +174,6 @@ public final class AerolithGameTests {
         return sum;
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 160)
     public static void itemRestsOnSolidDeck(GameTestHelper test) {
         CraftEntity craft = plankSquare(test, false);
         var item = test.spawnItem(Items.STICK, 5.5f, 6f, 5.5f);
@@ -173,7 +183,6 @@ public final class AerolithGameTests {
         ).thenExecute(() -> { item.discard(); craft.discard(); }).thenSucceed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 160)
     public static void itemFallsThroughHullGap(GameTestHelper test) {
         CraftEntity craft = plankSquare(test, true);
         var item = test.spawnItem(Items.STICK, 5.5f, 6f, 5.5f);
@@ -184,7 +193,6 @@ public final class AerolithGameTests {
         ).thenExecute(() -> { item.discard(); craft.discard(); }).thenSucceed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 60)
     public static void brokenMiddleSplitsCraftIntoTwoBodiesWithSameMomentum(GameTestHelper test) {
         floor(test);
         for (int x = 3; x <= 7; x++) test.setBlock(x, 2, 5, Blocks.OAK_PLANKS);
@@ -199,7 +207,6 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 60)
     public static void playerPlacesAndBreaksBlocksWithTheCrosshair(GameTestHelper test) {
         floor(test);
         test.setBlock(5, 2, 5, Blocks.OAK_PLANKS);
@@ -233,13 +240,12 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 200)
     public static void fragmentsOfASpinningFallingCraftStayAboveTheFloor(GameTestHelper test) {
         // Spinning pieces fly several blocks sideways, so the floor is wide; the test area is capped by barriers at 12.
         for (int x = -15; x <= 25; x++) {
             for (int z = -15; z <= 25; z++) test.setBlock(x, 1, z, Blocks.STONE);
         }
-        for (int x = 3; x <= 7; x++) test.setBlock(x, 10, 5, Blocks.WHITE_WOOL);
+        for (int x = 3; x <= 7; x++) test.setBlock(x, 10, 5, Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.WHITE));
         ServerPlayer owner = editor(test.getLevel());
         CraftEntity craft = assembleWithTool(test, owner, new BlockPos(3, 10, 5), new BlockPos(7, 10, 5));
         WorldPhysics physics = WorldPhysics.of(test.getLevel());
@@ -262,7 +268,6 @@ public final class AerolithGameTests {
         }).thenSucceed();
     }
 
-    @GameTest(template = "test_pad")
     public static void uniformBlocksMergeIntoFewCollidersWithTheSameMass(GameTestHelper test) {
         var planks = Blocks.OAK_PLANKS.defaultBlockState();
         var stone = Blocks.STONE.defaultBlockState();
@@ -297,7 +302,6 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 60)
     public static void serverAcceptsTheClientsBlockChoiceWhenItsOwnRayMisses(GameTestHelper test) {
         floor(test);
         test.setBlock(5, 2, 5, Blocks.OAK_PLANKS);
@@ -308,12 +312,12 @@ public final class AerolithGameTests {
         player.setXRot(-60); // looking up and away: the server's own ray finds nothing
         test.assertTrue(CraftEditing.nearest(test.getLevel(), player.getEyePosition(), player.getViewVector(1f), 4.5, 1f) == null,
                 "The test needs a view that misses the craft");
-        var top = new CraftClick(false, false, craft.getId(), BlockPos.ZERO, Direction.UP, new Vec3(0, 0.5, 0));
+        var top = new CraftClick(false, false, false, craft.getId(), BlockPos.ZERO, Direction.UP, new Vec3(0, 0.5, 0));
         var claimed = CraftClick.claimed(player, top, player.blockInteractionRange());
         test.assertTrue(claimed != null && claimed.craft() == craft, "A block in reach must be accepted from the client");
-        test.assertTrue(CraftClick.claimed(player, new CraftClick(false, false, craft.getId(), BlockPos.ZERO.east(), Direction.UP,
+        test.assertTrue(CraftClick.claimed(player, new CraftClick(false, false, false, craft.getId(), BlockPos.ZERO.east(), Direction.UP,
                 new Vec3(1, 0.5, 0)), 4.5) == null, "A block that is not part of the craft must be refused");
-        test.assertTrue(CraftClick.claimed(player, new CraftClick(false, false, craft.getId(), BlockPos.ZERO, Direction.UP,
+        test.assertTrue(CraftClick.claimed(player, new CraftClick(false, false, false, craft.getId(), BlockPos.ZERO, Direction.UP,
                 new Vec3(40, 0.5, 0)), 4.5) == null, "A hit point far out of reach must be refused");
         player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.STONE_BRICKS, 2));
         craft.interact(player, InteractionHand.MAIN_HAND, claimed.target());
@@ -323,7 +327,6 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 60)
     public static void creativePlayersBreakABlockWithOneHit(GameTestHelper test) {
         floor(test);
         test.setBlock(5, 2, 5, Blocks.OAK_PLANKS);
@@ -344,7 +347,6 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void theFarEndOfALongCraftCanBeAimedAt(GameTestHelper test) {
         // Vanilla entity queries only look two blocks past a section holding the entity's origin, so the ends of a long
         // craft used to be unreachable.
@@ -367,7 +369,6 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void aTiltedBlockInAPitIsHitFromAbove(GameTestHelper test) {
         for (int x = 3; x <= 7; x++) {
             for (int z = 3; z <= 7; z++) {
@@ -422,7 +423,6 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 200)
     public static void aCraftDroppedOntoAnotherOneDoesNotBounce(GameTestHelper test) {
         floor(test);
         for (int x = 5; x <= 6; x++) {
@@ -447,7 +447,6 @@ public final class AerolithGameTests {
         }).thenSucceed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 400)
     public static void blocksOfACraftRunVanillaTicks(GameTestHelper test) {
         var level = test.getLevel();
         ServerPlayer player = editor(level);
@@ -479,7 +478,6 @@ public final class AerolithGameTests {
                 .thenExecute(() -> craft.discard()).thenSucceed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 100)
     public static void towStaffMovesACraftOnlyWhileHeldInCreative(GameTestHelper test) {
         floor(test);
         var player = editor(test.getLevel());
@@ -509,7 +507,6 @@ public final class AerolithGameTests {
                 .thenExecute(craft::discard).thenSucceed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 140)
     public static void towStaffPinsTheHeldCraftWithoutLosingItsCollisions(GameTestHelper test) {
         floor(test);
         ServerLevel level = test.getLevel();
@@ -536,8 +533,8 @@ public final class AerolithGameTests {
                     "Pinning must stop both the grip and all motion");
             test.assertTrue(!physics.impulseAt(craft, new Vec3(0, 2000, 0), craft.position()), "A pinned craft accepted an impulse");
             pinned[0] = craft.position();
-            CraftEntity savedCopy = Aerolith.CRAFT.get().create(level);
-            savedCopy.load(craft.saveWithoutId(new CompoundTag()));
+            CraftEntity savedCopy = Aerolith.CRAFT.get().create(level, net.minecraft.world.entity.EntitySpawnReason.TRIGGERED);
+            load(savedCopy, save(craft));
             test.assertTrue(savedCopy.anchored(), "The pinned state was not saved");
             landing[0] = StructureTransfer.create(level, cube, pinned[0].add(0, 3, 0), UUID.randomUUID());
             test.assertTrue(landing[0] != null, "Cannot create the falling craft");
@@ -556,7 +553,6 @@ public final class AerolithGameTests {
                 .thenExecute(craft::discard).thenSucceed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 100)
     public static void litTntAppearsOnTheDeckAndDamagesItsCraft(GameTestHelper test) {
         floor(test);
         var level = test.getLevel();
@@ -585,7 +581,6 @@ public final class AerolithGameTests {
                 "TNT exploded without damaging the raft")).thenExecute(craft::discard).thenSucceed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 300)
     public static void waterPouredIntoACraftFlowsAndStaysInIt(GameTestHelper test) {
         var level = test.getLevel();
         ServerPlayer player = editor(level);
@@ -609,7 +604,6 @@ public final class AerolithGameTests {
         }).thenExecute(() -> craft.discard()).thenSucceed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 400)
     public static void waterNeverLeavesTheBoxOfACraft(GameTestHelper test) {
         var level = test.getLevel();
         ServerPlayer player = editor(level);
@@ -638,7 +632,6 @@ public final class AerolithGameTests {
         }).thenSucceed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 200)
     public static void entitiesSwimInTheWaterOfACraft(GameTestHelper test) {
         var level = test.getLevel();
         ServerPlayer player = editor(level);
@@ -653,9 +646,9 @@ public final class AerolithGameTests {
         for (int x = -1; x <= 1; x++) {
             for (int z = -1; z <= 1; z++) plot.setBlockAndUpdate(craft.plotPos(new BlockPos(x, 1, z)), Blocks.WATER.defaultBlockState());
         }
-        var wet = test.spawn(net.minecraft.world.entity.EntityType.PIG, 5, 4, 5);
+        var wet = test.spawn(net.minecraft.world.entity.EntityTypes.PIG, 5, 4, 5);
         wet.setPos(CraftEditing.worldCenter(craft, new BlockPos(0, 1, 0)));
-        var dry = test.spawn(net.minecraft.world.entity.EntityType.PIG, 12, 4, 5);
+        var dry = test.spawn(net.minecraft.world.entity.EntityTypes.PIG, 12, 4, 5);
         // The raft is dropped, and falls faster than a pig sinks.
         test.startSequence().thenIdle(8).thenWaitUntil(() -> test.assertTrue(craft.speed() < 0.1, "The raft has not landed")).thenIdle(8).thenExecute(() -> {
             test.assertTrue(wet.isInWater(), "An entity in the water of a craft does not swim");
@@ -666,14 +659,17 @@ public final class AerolithGameTests {
         }).thenSucceed();
     }
 
-    @GameTest(template = "test_pad", batch = "aerolith_height_limit", timeoutTicks = 80)
     public static void wideCraftFallsNearTheBottomOfTheWorld(GameTestHelper test) {
         ServerLevel level = test.getLevel();
-        // This hull is wider than a fixture; use open flat terrain away from other test structures.
+        // The 26.3 GameTest preset fills the bottom 68 layers with bedrock and sandstone. Make room to fall near minY.
         Vec3 center = test.absoluteVec(new Vec3(5.5, 0, 97.5));
-        var chunk = new net.minecraft.world.level.ChunkPos(BlockPos.containing(center));
-        for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++) level.setChunkForced(chunk.x + x, chunk.z + z, true);
-        Vec3 start = new Vec3(center.x, level.getMinBuildHeight() + 6.0, center.z);
+        var chunk = net.minecraft.world.level.ChunkPos.containing(BlockPos.containing(center));
+        for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++) level.setChunkForced(chunk.x() + x, chunk.z() + z, true);
+        Vec3 start = new Vec3(center.x, level.getMinY() + 6.0, center.z);
+        BlockPos bottom = BlockPos.containing(center.x, level.getMinY() + 1, center.z);
+        for (BlockPos pos : BlockPos.betweenClosed(bottom.offset(-26, 0, -1), bottom.offset(26, 6, 1))) {
+            level.setBlock(pos, Blocks.AIR.defaultBlockState(), Plots.QUIET);
+        }
         List<CraftBlock> blocks = new java.util.ArrayList<>();
         for (int x = -25; x <= 25; x++) blocks.add(new CraftBlock(new BlockPos(x, 0, 0), Blocks.OAK_PLANKS.defaultBlockState()));
         CraftEntity craft = StructureTransfer.create(level, blocks, start, UUID.randomUUID());
@@ -687,7 +683,6 @@ public final class AerolithGameTests {
      * The engine benchmark. It only runs when AEROLITH_BENCH is set (AEROLITH_BENCH=1 ./gradlew runGameTestServer), alone in its
      * own batch so that no other test loads the server while it is timed; the results are in the log under "Benchmark".
      */
-    @GameTest(template = "test_pad", batch = "aerolith_bench", timeoutTicks = 4000)
     public static void engineBenchmark(GameTestHelper test) {
         if (System.getenv("AEROLITH_BENCH") == null) {
             test.succeed();
@@ -695,8 +690,8 @@ public final class AerolithGameTests {
         }
         var level = test.getLevel();
         Vec3 center = test.absoluteVec(new Vec3(5, 1, 5));
-        var chunk = new net.minecraft.world.level.ChunkPos(BlockPos.containing(center));
-        for (int x = -4; x <= 4; x++) for (int z = -4; z <= 4; z++) level.setChunkForced(chunk.x + x, chunk.z + z, true);
+        var chunk = net.minecraft.world.level.ChunkPos.containing(BlockPos.containing(center));
+        for (int x = -4; x <= 4; x++) for (int z = -4; z <= 4; z++) level.setChunkForced(chunk.x() + x, chunk.z() + z, true);
         int[][] scenarios = {{1, 60, 0}, {16, 16, 0}, {48, 8, 0}, {16, 16, 1}};
         var sequence = test.startSequence();
         for (int[] scenario : scenarios) {
@@ -709,11 +704,10 @@ public final class AerolithGameTests {
                     .thenExecute(() -> test.assertTrue(error[0] == null, error[0]));
         }
         sequence.thenExecute(() -> {
-            for (int x = -4; x <= 4; x++) for (int z = -4; z <= 4; z++) level.setChunkForced(chunk.x + x, chunk.z + z, false);
+            for (int x = -4; x <= 4; x++) for (int z = -4; z <= 4; z++) level.setChunkForced(chunk.x() + x, chunk.z() + z, false);
         }).thenSucceed();
     }
 
-    @GameTest(template = "test_pad")
     public static void breakingAChestOfACraftSpillsItsContentsIntoTheWorld(GameTestHelper test) {
         var level = test.getLevel();
         ServerPlayer player = editor(level);
@@ -739,12 +733,11 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void craftsSavedBeforePlotStorageMoveIntoAPlot(GameTestHelper test) {
         var level = test.getLevel();
         var saved = new CompoundTag();
         var list = new net.minecraft.nbt.ListTag();
-        BlockState[] states = {Blocks.OAK_PLANKS.defaultBlockState(), Blocks.STONE_BRICKS.defaultBlockState(), Blocks.RED_WOOL.defaultBlockState()};
+        BlockState[] states = {Blocks.OAK_PLANKS.defaultBlockState(), Blocks.STONE_BRICKS.defaultBlockState(), Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.RED).defaultBlockState()};
         for (int i = 0; i < states.length; i++) {
             var entry = new CompoundTag();
             entry.putLong("Offset", new BlockPos(i, 0, 0).asLong());
@@ -753,36 +746,35 @@ public final class AerolithGameTests {
         }
         saved.put("Hull", list);
         UUID owner = UUID.randomUUID();
-        saved.putUUID("Owner", owner);
-        CraftEntity craft = Aerolith.CRAFT.get().create(level);
-        craft.load(saved);
+        saved.store("Owner", net.minecraft.core.UUIDUtil.CODEC, owner);
+        CraftEntity craft = Aerolith.CRAFT.get().create(level, net.minecraft.world.entity.EntitySpawnReason.TRIGGERED);
+        load(craft, saved);
         test.assertTrue(craft.plotId() >= 0 && craft.blocks().size() == 3 && craft.hull() != null, "An old craft did not move into a plot");
         for (int i = 0; i < states.length; i++) {
             test.assertTrue(craft.plotLevel().getBlockState(craft.plotPos(new BlockPos(i, 0, 0))) == states[i], "Block " + i + " was not written to the plot");
         }
-        var again = new CompoundTag();
-        craft.saveWithoutId(again);
+        var again = save(craft);
         test.assertTrue(again.contains("PlotId") && !again.contains("Hull"), "The migrated craft must save in the new format");
         craft.discard();
         test.succeed();
     }
 
-    @GameTest(template = "test_pad", batch = "aerolith_spawn", timeoutTicks = 200)
     public static void spawnCommandMakesAsManyCraftsOfThatSize(GameTestHelper test) {
         var level = test.getLevel();
         BlockPos at = test.absolutePos(new BlockPos(5, 60, 5));
-        var chunk = new net.minecraft.world.level.ChunkPos(at);
-        for (int x = -3; x <= 3; x++) for (int z = -3; z <= 3; z++) level.setChunkForced(chunk.x + x, chunk.z + z, true);
+        var chunk = net.minecraft.world.level.ChunkPos.containing(at);
+        for (int x = -3; x <= 3; x++) for (int z = -3; z <= 3; z++) level.setChunkForced(chunk.x() + x, chunk.z() + z, true);
         var source = level.getServer().createCommandSourceStack().withLevel(level).withPosition(Vec3.atCenterOf(at)).withSuppressedOutput();
         // Something in the way: the place is passed over, not filled.
         BlockPos rock = at.above().south(4);
         level.setBlockAndUpdate(rock, Blocks.STONE.defaultBlockState());
         var commands = level.getServer().getCommands();
         commands.performPrefixedCommand(source, "aerolith spawn 40 3 2 5 minecraft:stone");
-        commands.performPrefixedCommand(source, "aerolith spawn 1 101 101 101");
+        commands.performPrefixedCommand(source, "aerolith spawn 1 " + (CraftSpawner.MAX_SIDE + 1) + " 2 2");
+        commands.performPrefixedCommand(source, "aerolith spawn 1 101 100 100");
         commands.performPrefixedCommand(source, "aerolith spawn 1 2 2 2 minecraft:torch");
         test.startSequence().thenIdle(40).thenExecute(() -> {
-            var made = HullCollisions.crafts(level).stream().filter(c -> c.getTags().contains(CraftSpawner.TAG)).toList();
+            var made = HullCollisions.crafts(level).stream().filter(c -> c.entityTags().contains(CraftSpawner.TAG)).toList();
             test.assertTrue(made.size() == 40, "Expected 40 crafts, got " + made.size());
             for (CraftEntity craft : made) {
                 var b = craft.hull().localBounds;
@@ -795,7 +787,6 @@ public final class AerolithGameTests {
         }).thenSucceed();
     }
 
-    @GameTest(template = "test_pad")
     public static void boundsOfATurnedCraftTouchItsCorners(GameTestHelper test) {
         CraftEntity craft = StructureTransfer.create(test.getLevel(), List.of(new CraftBlock(BlockPos.ZERO, Blocks.STONE.defaultBlockState()),
                 new CraftBlock(BlockPos.ZERO.above(), Blocks.STONE.defaultBlockState())), test.absoluteVec(new Vec3(5, 6, 5)), UUID.randomUUID());
@@ -819,13 +810,12 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void firstImpulseCannotCrossAnUnclaimedTerrainTile(GameTestHelper test) {
         ServerLevel level = test.getLevel();
         // Above the barriers around the test: where a tile begins, and so where the cube starts, may be beyond them.
         BlockPos here = test.absolutePos(new BlockPos(5, 40, 5));
-        var chunk = new net.minecraft.world.level.ChunkPos(here);
-        for (int x = -1; x <= 1; x++) for (int z = -1; z <= 1; z++) level.setChunkForced(chunk.x + x, chunk.z + z, true);
+        var chunk = net.minecraft.world.level.ChunkPos.containing(here);
+        for (int x = -1; x <= 1; x++) for (int z = -1; z <= 1; z++) level.setChunkForced(chunk.x() + x, chunk.z() + z, true);
         int wallX = Math.floorDiv(here.getX() + Terrain.TILE / 2, Terrain.TILE) * Terrain.TILE;
         BlockPos wall = new BlockPos(wallX, here.getY(), here.getZ());
         level.setBlockAndUpdate(wall, Blocks.STONE.defaultBlockState());
@@ -842,7 +832,6 @@ public final class AerolithGameTests {
         }).thenSucceed();
     }
 
-    @GameTest(template = "test_pad")
     public static void earlyPlotLookupPreservesSavedChestButNotDiscardedChest(GameTestHelper test) {
         var plot = Plots.level(test.getLevel().getServer());
         int id = Plots.allocate(plot);
@@ -854,8 +843,8 @@ public final class AerolithGameTests {
             PlotChunks.keep(plot, key);
             ((ChestBlockEntity) plot.getBlockEntity(pos)).setItem(2, new ItemStack(Items.DIAMOND, 7));
             PlotChunks.letGo(plot, key);
-            disk.flushWorker();
-            test.assertTrue(disk.read(new net.minecraft.world.level.ChunkPos(key)).join().isPresent(), "No plot chunk was saved");
+            disk.synchronize(true).join();
+            test.assertTrue(disk.read(net.minecraft.world.level.ChunkPos.unpack(key)).join().isPresent(), "No plot chunk was saved");
             // An ordinary block lookup, before any craft claims its saved chunks.
             test.assertTrue(plot.getBlockEntity(pos) instanceof ChestBlockEntity chest && chest.getItem(2).is(Items.DIAMOND)
                     && chest.getItem(2).getCount() == 7, "An early lookup hid a saved chest behind an empty chunk");
@@ -863,8 +852,8 @@ public final class AerolithGameTests {
             test.assertTrue(plot.getBlockState(pos).isAir(), "A discarded plot remained visible");
             PlotChunks.letGo(plot, key);
             PlotChunks.save(plot, true);
-            disk.flushWorker();
-            test.assertTrue(disk.read(new net.minecraft.world.level.ChunkPos(key)).join().isEmpty(), "Looking at an empty plot cancelled its deletion");
+            disk.synchronize(true).join();
+            test.assertTrue(disk.read(net.minecraft.world.level.ChunkPos.unpack(key)).join().isEmpty(), "Looking at an empty plot cancelled its deletion");
             test.succeed();
         } finally {
             PlotChunks.discard(plot, key);
@@ -872,7 +861,6 @@ public final class AerolithGameTests {
         }
     }
 
-    @GameTest(template = "test_pad")
     public static void entitySpawningItemsAreNotSpentOnACraft(GameTestHelper test) {
         var level = test.getLevel();
         ServerPlayer player = editor(level);
@@ -890,7 +878,6 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void everyBlockWithAShapeCanBeAimedAtOnACraft(GameTestHelper test) {
         var failures = new java.util.ArrayList<String>();
         int tested = 0;
@@ -906,7 +893,7 @@ public final class AerolithGameTests {
                 for (var box : boxes) {
                     Vec3 center = box.getCenter().add(at.getX() - 0.5, at.getY() - 0.5, at.getZ() - 0.5);
                     for (Direction side : Direction.values()) {
-                        Vec3 normal = Vec3.atLowerCornerOf(side.getNormal());
+                        Vec3 normal = side.getUnitVec3();
                         var pick = hull.pick(center.add(normal.scale(3)), normal.scale(-1), 6);
                         if (pick == null || pick.block().state() != state) failures.add(state + " from " + side);
                     }
@@ -918,7 +905,6 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad")
     public static void everySupportedBlockStateCanBePickedFromEverySide(GameTestHelper test) {
         var failures = new java.util.ArrayList<String>();
         int tested = 0;
@@ -930,7 +916,7 @@ public final class AerolithGameTests {
                 for (var box : Materials.boxes(state)) {
                     Vec3 center = box.getCenter().subtract(0.5, 0.5, 0.5);
                     for (Direction side : Direction.values()) {
-                        Vec3 normal = Vec3.atLowerCornerOf(side.getNormal());
+                        Vec3 normal = side.getUnitVec3();
                         var pick = hull.pick(center.add(normal.scale(3)), normal.scale(-1), 6);
                         if (pick == null || pick.block().state() != state) {
                             failures.add(state + " from " + side);
@@ -945,7 +931,6 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 60)
     public static void assemblingInsideAnotherCraftIsRefused(GameTestHelper test) {
         floor(test);
         test.setBlock(5, 2, 5, Blocks.OAK_PLANKS);
@@ -961,14 +946,13 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 100)
     public static void creatureOnDeckCountsAsLoad(GameTestHelper test) {
         floor(test);
         for (int x = 4; x <= 6; x++) {
             for (int z = 4; z <= 6; z++) test.setBlock(x, 2, z, Blocks.OAK_PLANKS);
         }
         CraftEntity craft = assembleWithTool(test, editor(test.getLevel()), new BlockPos(4, 2, 4), new BlockPos(6, 2, 6));
-        var pig = test.spawn(net.minecraft.world.entity.EntityType.PIG, 5.5f, 4.5f, 5.5f);
+        var pig = test.spawn(net.minecraft.world.entity.EntityTypes.PIG, 5.5f, 4.5f, 5.5f);
         test.startSequence().thenWaitUntil(() -> test.assertTrue(
                 HullCollisions.supported(craft).stream().anyMatch(s -> s.entity() == pig) && CraftLoads.mass(pig) > 50,
                 "A pig standing on the deck must be a supported load")
@@ -981,7 +965,6 @@ public final class AerolithGameTests {
         }
     }
 
-    @GameTest(template = "test_pad", batch = "aerolith_heavy_stack", timeoutTicks = 230)
     public static void goldRaftsStayOnAnOakRaftWithoutJitter(GameTestHelper test) {
         floor(test);
         Vec3 at = Vec3.atCenterOf(test.absolutePos(new BlockPos(5, 2, 5)));
@@ -1030,7 +1013,6 @@ public final class AerolithGameTests {
         return assembleWithTool(test, editor(test.getLevel()), new BlockPos(4, 2, 4), new BlockPos(6, 2, 6));
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 120)
     public static void thinWingLandsOnItsOwnShape(GameTestHelper test) {
         for (int x = 2; x <= 8; x++) {
             for (int z = 2; z <= 8; z++) test.setBlock(x, 1, z, Blocks.STONE);
@@ -1045,7 +1027,6 @@ public final class AerolithGameTests {
         ).thenExecute(craft::discard).thenSucceed();
     }
 
-    @GameTest(template = "test_pad", timeoutTicks = 240)
     public static void woodFloatsInMinecraftWater(GameTestHelper test) {
         ServerLevel level = test.getLevel();
         for (int z = 1; z <= 9; z++) {
@@ -1067,7 +1048,6 @@ public final class AerolithGameTests {
     }
 
     @SuppressWarnings("removal")
-    @GameTest(template = "test_pad", skyAccess = true, timeoutTicks = 120)
     public static void pilotCanLiftAndDismount(GameTestHelper test) {
         ServerLevel level = test.getLevel();
         BlockPos lift = new BlockPos(4, 2, 4);
@@ -1119,7 +1099,7 @@ public final class AerolithGameTests {
 
     private static void useTool(ServerPlayer player, BlockPos pos) {
         InteractionHand main = InteractionHand.MAIN_HAND;
-        player.gameMode.useItemOn(player, player.serverLevel(), player.getMainHandItem(), main,
+        player.gameMode.useItemOn(player, player.level(), player.getMainHandItem(), main,
                 new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false));
     }
 }

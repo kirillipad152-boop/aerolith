@@ -21,7 +21,6 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.ItemInteractionResult;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.BucketItem;
@@ -37,7 +36,6 @@ import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.network.PacketDistributor;
 import org.joml.Quaternionf;
 
 /** Breaking, using and placing blocks of an assembled craft while it keeps moving. */
@@ -127,7 +125,7 @@ final class CraftEditing {
         Target target = chosen != null ? chosen
                 : target(craft, player.getEyePosition(), player.getViewVector(1f), player.blockInteractionRange(), 1f);
         if (target == null) return;
-        ServerLevel level = player.serverLevel();
+        ServerLevel level = player.level();
         long now = level.getGameTime();
         CraftBlock block = target.pick().block();
         BlockPos pos = craft.plotPos(block.offset());
@@ -171,7 +169,7 @@ final class CraftEditing {
         }
         if (mining.progress >= 1f) {
             MINING.remove(player);
-            player.displayClientMessage(Component.empty(), true);
+            player.sendOverlayMessage(Component.empty());
             breakBlock(player, craft, block);
         } else {
             int stage = (int) (mining.progress * 10);
@@ -181,7 +179,7 @@ final class CraftEditing {
     }
 
     private static void sendCrack(ServerPlayer player, CraftEntity craft, BlockPos offset, int stage) {
-        PacketDistributor.sendToPlayersTrackingEntity(craft, new CraftCrack(player.getId(), craft.getId(), offset, stage));
+        PlotSync.sendToTrackers(craft, new CraftCrack(player.getId(), craft.getId(), offset, stage));
     }
 
     /** Terrain particles carry the block state but spawn at the real, fractional position of the moving block. */
@@ -204,7 +202,7 @@ final class CraftEditing {
      * the drops, containers spill, and everything that appears is moved out to the craft in the world.
      */
     private static void breakBlock(ServerPlayer player, CraftEntity craft, CraftBlock broken) {
-        ServerLevel level = player.serverLevel();
+        ServerLevel level = player.level();
         ServerLevel plot = craft.plotLevel();
         BlockPos pos = craft.plotPos(broken.offset());
         BlockState state = plot.getBlockState(pos);
@@ -265,7 +263,7 @@ final class CraftEditing {
 
         @Override
         public Direction getHorizontalDirection() {
-            return Direction.getNearest(view.x, 0, view.z);
+            return Direction.getApproximateNearest(view.x, 0, view.z);
         }
 
         @Override
@@ -289,7 +287,7 @@ final class CraftEditing {
         Vec3 hitPoint = PlotGrid.toPlot(craft.plotOrigin(), target.localHit());
         BlockHitResult hit = new BlockHitResult(hitPoint, target.pick().face(), pos, false);
         BlockState state = plot.getBlockState(pos);
-        ServerLevel level = player.serverLevel();
+        ServerLevel level = player.level();
 
         if (stack.getItem() instanceof BucketItem bucket) {
             return useBucket(player, craft, plot, hand, stack, bucket, hit);
@@ -299,14 +297,14 @@ final class CraftEditing {
         boolean skipBlock = player.isSecondaryUseActive() && holding
                 && !(player.getMainHandItem().doesSneakBypassUse(plot, pos, player) && player.getOffhandItem().doesSneakBypassUse(plot, pos, player));
         if (!skipBlock && !state.isAir() && !CraftEntity.isFluid(state)) {
-            ItemInteractionResult result = state.useItemOn(stack, plot, player, hand, hit);
-            if (result.consumesAction()) return result.result();
-            if (result == ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION && hand == InteractionHand.MAIN_HAND) {
+            InteractionResult result = state.useItemOn(stack, plot, player, hand, hit);
+            if (result.consumesAction()) return result;
+            if (result == InteractionResult.TRY_WITH_EMPTY_HAND && hand == InteractionHand.MAIN_HAND) {
                 InteractionResult plain = state.useWithoutItem(plot, player, hit);
                 if (plain.consumesAction()) return plain;
             }
         }
-        if (stack.isEmpty() || player.getCooldowns().isOnCooldown(stack.getItem()) || !player.getAbilities().mayBuild) {
+        if (stack.isEmpty() || player.getCooldowns().isOnCooldown(stack) || !player.getAbilities().mayBuild) {
             return InteractionResult.PASS;
         }
         if (stack.getItem() instanceof BlockItem blockItem) {
@@ -356,7 +354,7 @@ final class CraftEditing {
                 if (!filled.isEmpty()) {
                     pickup.getPickupSound(state).ifPresent(sound -> {
                         Vec3 at = worldCenter(craft, pos.subtract(craft.plotOrigin()));
-                        player.serverLevel().playSound(null, at.x, at.y, at.z, sound, SoundSource.BLOCKS, 1f, 1f);
+                        player.level().playSound(null, at.x, at.y, at.z, sound, SoundSource.BLOCKS, 1f, 1f);
                     });
                     player.setItemInHand(hand, net.minecraft.world.item.ItemUtils.createFilledResult(stack, player, filled));
                     craft.settle();
@@ -429,7 +427,7 @@ final class CraftEditing {
     }
 
     private static boolean hasSeat(List<CraftBlock> group) {
-        return group.stream().anyMatch(b -> b.state().is(AerolithParts.SEAT.get()) || b.state().is(net.minecraft.world.level.block.Blocks.RED_WOOL));
+        return group.stream().anyMatch(b -> b.state().is(AerolithParts.SEAT.get()) || b.state().is(net.minecraft.world.level.block.Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.RED)));
     }
 
     /** Each fluid cell goes with the group it can be reached from through fluid, so a pool stays with its basin. */
@@ -459,7 +457,7 @@ final class CraftEditing {
     /** Moves a part that broke off into a plot of its own, as a new craft with the motion the part had. */
     private static void splitOff(ServerLevel level, CraftEntity parent, ServerLevel plot, List<CraftBlock> group, List<CraftBlock> fluids) {
         WorldPhysics physics = WorldPhysics.of(level);
-        CraftEntity fragment = physics.hasSpace() ? Aerolith.CRAFT.get().create(level) : null;
+        CraftEntity fragment = physics.hasSpace() ? Aerolith.CRAFT.get().create(level, net.minecraft.world.entity.EntitySpawnReason.TRIGGERED) : null;
         if (fragment == null) {
             group.forEach(block -> plot.destroyBlock(parent.plotPos(block.offset()), true));
             fluids.forEach(block -> Plots.erase(plot, parent.plotPos(block.offset())));

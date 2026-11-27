@@ -92,15 +92,15 @@ final class Hull {
         for (CraftBlock block : blocks) {
             BlockPos p = block.offset();
             Vec3 center = Vec3.atLowerCornerOf(p);
-            if (seat == null && (block.state().is(AerolithParts.SEAT.get()) || block.state().is(Blocks.RED_WOOL))
+            if (seat == null && (block.state().is(AerolithParts.SEAT.get()) || block.state().is(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.RED)))
                     && !cells.containsKey(p.above()) && !cells.containsKey(p.above(2))) {
                 double top = cells.get(p).stream().mapToDouble(b -> b.maxY).max().orElse(p.getY() + 0.5);
                 seat = new Vec3(center.x, top + 0.03, center.z);
             }
 
-            Direction foilNormal = block.state().is(AerolithParts.WING.get()) || block.state().is(Blocks.LIGHT_BLUE_WOOL)
+            Direction foilNormal = block.state().is(AerolithParts.WING.get()) || block.state().is(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.LIGHT_BLUE))
                     ? Direction.UP
-                    : block.state().is(Blocks.YELLOW_WOOL) ? Direction.EAST : null;
+                    : block.state().is(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.YELLOW)) ? Direction.EAST : null;
             int foilKind = 1;
             if (block.state().getBlock() instanceof ControlSurfaceBlock control) {
                 foilNormal = ControlSurfaceBlock.normal(block.state());
@@ -120,8 +120,8 @@ final class Hull {
             }
 
             boolean engine = block.state().is(AerolithParts.THRUSTER.get());
-            Direction thrust = block.state().is(Blocks.ORANGE_WOOL) ? Direction.UP
-                    : block.state().is(Blocks.LIME_GLAZED_TERRACOTTA)
+            Direction thrust = block.state().is(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.ORANGE)) ? Direction.UP
+                    : block.state().is(Blocks.GLAZED_TERRACOTTA.pick(net.minecraft.world.item.DyeColor.LIME))
                         ? block.state().getValue(HorizontalDirectionalBlock.FACING)
                         : engine ? block.state().getValue(BlockStateProperties.FACING) : null;
             if (thrust != null && !cells.containsKey(p.relative(thrust.getOpposite()))) {

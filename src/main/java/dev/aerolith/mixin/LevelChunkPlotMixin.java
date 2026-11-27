@@ -25,7 +25,7 @@ abstract class LevelChunkPlotMixin {
     Level level;
 
     @Inject(method = "setBlockState", at = @At("RETURN"))
-    private void aerolith$changed(BlockPos pos, BlockState state, boolean moved, CallbackInfoReturnable<BlockState> callback) {
+    private void aerolith$changed(BlockPos pos, BlockState state, int flags, CallbackInfoReturnable<BlockState> callback) {
         BlockState old = callback.getReturnValue();
         if (old != null && level instanceof ServerLevel server) {
             Plots.changed(server, pos, old, state);

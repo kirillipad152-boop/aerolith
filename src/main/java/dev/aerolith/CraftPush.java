@@ -6,7 +6,7 @@ import java.util.WeakHashMap;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -17,7 +17,7 @@ import net.neoforged.neoforge.network.registration.PayloadRegistrar;
  * pressing; the server bounds the push by the player's weight and by how near the player really is.
  */
 public record CraftPush(int craft, Vec3 point, Vec3 direction, float strength) implements CustomPacketPayload {
-    private static final Type<CraftPush> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(Aerolith.ID, "craft_push"));
+    private static final Type<CraftPush> TYPE = new Type<>(Identifier.fromNamespaceAndPath(Aerolith.ID, "craft_push"));
     private static final StreamCodec<ByteBuf, CraftPush> CODEC = StreamCodec.ofMember(CraftPush::write, CraftPush::read);
     private static final Map<ServerPlayer, Long> LAST = new WeakHashMap<>();
 

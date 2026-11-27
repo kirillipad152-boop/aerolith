@@ -6,7 +6,7 @@ import java.util.Set;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -32,8 +32,8 @@ final class Materials {
             Map.entry(Blocks.GLASS, 2500.0), Map.entry(Blocks.DIRT, 1350.0),
             Map.entry(Blocks.IRON_BLOCK, 7870.0), Map.entry(Blocks.GOLD_BLOCK, 19300.0),
             Map.entry(Blocks.PACKED_ICE, 920.0), Map.entry(Blocks.BLUE_ICE, 925.0), Map.entry(Blocks.ICE, 917.0),
-            Map.entry(Blocks.RED_WOOL, 90.0), Map.entry(Blocks.ORANGE_WOOL, 180.0),
-            Map.entry(Blocks.LIME_GLAZED_TERRACOTTA, 200.0), Map.entry(Blocks.SLIME_BLOCK, 1150.0)
+            Map.entry(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.RED), 90.0), Map.entry(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.ORANGE), 180.0),
+            Map.entry(Blocks.GLAZED_TERRACOTTA.pick(net.minecraft.world.item.DyeColor.LIME), 200.0), Map.entry(Blocks.SLIME_BLOCK, 1150.0)
     );
     private static final Set<String> ROCK = Set.of("andesite", "polished_andesite", "diorite", "polished_diorite",
             "granite", "polished_granite", "tuff", "polished_tuff", "blackstone", "polished_blackstone",
@@ -48,7 +48,7 @@ final class Materials {
         Block block = state.getBlock();
         Double known = DENSITY.get(block);
         if (known != null) return known;
-        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(block);
+        Identifier id = BuiltInRegistries.BLOCK.getKey(block);
         String path = id.getPath();
         if (id.getNamespace().equals(Aerolith.ID)) {
             return switch (path) {
@@ -109,7 +109,7 @@ final class Materials {
         if (state.is(Blocks.ICE) || state.is(Blocks.PACKED_ICE) || state.is(Blocks.BLUE_ICE)
                 || state.is(Blocks.FROSTED_ICE)) return Surface.ICE;
         if (state.is(Blocks.SLIME_BLOCK)) return Surface.SLIME;
-        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        Identifier id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
         if (id.getNamespace().equals(Aerolith.ID)) {
             return switch (id.getPath()) {
                 case "pilot_seat", "wing", "elevator", "rudder", "aileron", "flap" -> Surface.WOOD;

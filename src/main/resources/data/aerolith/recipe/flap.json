@@ -2,15 +2,9 @@
   "type": "minecraft:crafting_shapeless",
   "category": "building",
   "ingredients": [
-    {
-      "item": "aerolith:wing"
-    },
-    {
-      "item": "minecraft:iron_nugget"
-    },
-    {
-      "item": "minecraft:lime_dye"
-    }
+    "aerolith:wing",
+    "minecraft:iron_nugget",
+    "minecraft:lime_dye"
   ],
   "result": {
     "id": "aerolith:flap",

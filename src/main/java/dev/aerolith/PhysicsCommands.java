@@ -30,7 +30,7 @@ final class PhysicsCommands {
                             craft.blocks().size(), format(craft.hull().mass), format(craft.speed()), format(craft.spin())), false);
                     return 1;
                 })))
-                .then(Commands.literal("assemble").requires(s -> s.hasPermission(2))
+                .then(Commands.literal("assemble").requires(s -> net.minecraft.commands.Commands.LEVEL_GAMEMASTERS.check(s.permissions()))
                         .then(Commands.argument("from", BlockPosArgument.blockPos())
                                 .then(Commands.argument("to", BlockPosArgument.blockPos()).executes(context -> {
                                     var source = context.getSource();
@@ -41,12 +41,12 @@ final class PhysicsCommands {
                                             BlockPosArgument.getLoadedBlockPos(context, "from"),
                                             BlockPosArgument.getLoadedBlockPos(context, "to")) != null ? 1 : 0;
                                 }))))
-                .then(Commands.literal("spawn").requires(s -> s.hasPermission(2))
+                .then(Commands.literal("spawn").requires(s -> net.minecraft.commands.Commands.LEVEL_GAMEMASTERS.check(s.permissions()))
                         .then(Commands.argument("count", IntegerArgumentType.integer(1, WorldPhysics.MAX_BODIES))
                         .then(side("x").then(side("y").then(side("z").executes(context -> spawn(context, Blocks.OAK_PLANKS.defaultBlockState()))
                         .then(Commands.argument("block", BlockStateArgument.block(event.getBuildContext()))
                                 .executes(context -> spawn(context, BlockStateArgument.getBlock(context, "block").getState()))))))))
-                .then(Commands.literal("perf").requires(s -> s.hasPermission(2))
+                .then(Commands.literal("perf").requires(s -> net.minecraft.commands.Commands.LEVEL_GAMEMASTERS.check(s.permissions()))
                         .executes(context -> {
                             context.getSource().sendSuccess(() -> Component.literal(Perf.report("server.")), false);
                             return 1;
@@ -59,12 +59,12 @@ final class PhysicsCommands {
                             Perf.reset("server.");
                             return 1;
                         })))
-                .then(Commands.literal("bench").requires(s -> s.hasPermission(2))
+                .then(Commands.literal("bench").requires(s -> net.minecraft.commands.Commands.LEVEL_GAMEMASTERS.check(s.permissions()))
                         .then(Commands.argument("crafts", com.mojang.brigadier.arguments.IntegerArgumentType.integer(1, WorldPhysics.MAX_BODIES))
                          .then(Commands.argument("side", com.mojang.brigadier.arguments.IntegerArgumentType.integer(2, Bench.MAX_SIDE))
                         .then(Commands.argument("ticks", com.mojang.brigadier.arguments.IntegerArgumentType.integer(20, 6000)).executes(context -> bench(context, false))
                         .then(Commands.literal("water").executes(context -> bench(context, true)))))))
-                .then(vector(Commands.literal("wind").requires(s -> s.hasPermission(2)), 40.0, (context, value) -> {
+                .then(vector(Commands.literal("wind").requires(s -> net.minecraft.commands.Commands.LEVEL_GAMEMASTERS.check(s.permissions())), 40.0, (context, value) -> {
                     WorldPhysics.of(context.getSource().getLevel()).wind(value);
                     context.getSource().sendSuccess(() -> Component.translatable("message.aerolith.wind",
                             format(value.x), format(value.y), format(value.z)), true);

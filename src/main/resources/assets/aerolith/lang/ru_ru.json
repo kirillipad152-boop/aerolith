@@ -7,7 +7,7 @@
   "block.aerolith.thruster": "Двигатель",
   "block.aerolith.wing": "Крыло",
   "entity.aerolith.craft": "Летательный аппарат",
-  "key.categories.aerolith": "Aerolith",
+  "key.category.aerolith.controls": "Aerolith",
   "key.aerolith.throttle_up": "Увеличить тягу",
   "key.aerolith.throttle_down": "Уменьшить тягу",
   "message.aerolith.corner": "Первый угол: %1$s, %2$s, %3$s.",

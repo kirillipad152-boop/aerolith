@@ -7,9 +7,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -19,7 +16,7 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
-import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 
 /** Aims at the real block shapes of crafts instead of their bounding boxes. */
 @EventBusSubscriber(modid = Aerolith.ID, value = Dist.CLIENT)
@@ -34,7 +31,7 @@ public final class CraftClient {
     @SubscribeEvent
     public static void setup(FMLClientSetupEvent event) {
         HullCollisions.pushSink = (craft, point, direction, strength) ->
-                PacketDistributor.sendToServer(new CraftPush(craft.getId(), point, direction, (float) strength));
+                ClientPacketDistributor.sendToServer(new CraftPush(craft.getId(), point, direction, (float) strength));
     }
 
     /** The craft block under the crosshair, unless something nearer in the world or a mob is in the way. */
@@ -75,7 +72,7 @@ public final class CraftClient {
             CRACKS.values().removeIf(crack -> crack.expires() <= level.getGameTime()
                     || !(level.getEntity(crack.update().craft()) instanceof CraftEntity));
         }
-        if (client.screen == null && client.player != null && client.player.getUseItem().is(Aerolith.TOW_STAFF.get())) {
+        if (client.gui.screen() == null && client.player != null && client.player.getUseItem().is(Aerolith.TOW_STAFF.get())) {
             // Vanilla discards attack presses during item use; the staff pins the held craft on that press.
             while (client.options.keyAttack.consumeClick()) attackTapped = true;
         }
@@ -108,15 +105,14 @@ public final class CraftClient {
     public static void interaction(InputEvent.InteractionKeyMappingTriggered event) {
         if (!event.isAttack() && !event.isUseItem() && !event.isPickBlock()) return;
         Minecraft client = Minecraft.getInstance();
-        float partial = client.getTimer().getGameTimeDeltaPartialTick(true);
+        float partial = client.getDeltaTracker().getGameTimeDeltaPartialTick(true);
         correctTarget(partial);
         CraftEditing.Located aimed = aimed(partial);
         if (aimed == null) return;
         event.setCanceled(true);
         event.setSwingHand(false);
-        CraftEditing.Target target = aimed.target();
         if (event.isPickBlock()) {
-            pick(client, target.pick().block().state());
+            send(aimed, false, false, true);
             return;
         }
         if (event.isAttack()) {
@@ -124,16 +120,16 @@ public final class CraftClient {
             attackTapped = true;
             return;
         }
-        client.player.swing(event.getHand());
-        send(aimed, false, event.getHand() == InteractionHand.OFF_HAND);
+        client.player.swing(event.getHand(), net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        send(aimed, false, event.getHand() == InteractionHand.OFF_HAND, false);
     }
 
     private static boolean attackTapped;
     private static boolean attackDown;
 
-    private static void send(CraftEditing.Located aimed, boolean attack, boolean offHand) {
+    private static void send(CraftEditing.Located aimed, boolean attack, boolean offHand, boolean pick) {
         CraftEditing.Target target = aimed.target();
-        PacketDistributor.sendToServer(new CraftClick(attack, offHand, aimed.craft().getId(), target.pick().block().offset(),
+        ClientPacketDistributor.sendToServer(new CraftClick(attack, offHand, pick, aimed.craft().getId(), target.pick().block().offset(),
                 target.pick().face(), target.localHit()));
     }
 
@@ -146,29 +142,14 @@ public final class CraftClient {
         boolean down = client.options.keyAttack.isDown();
         boolean pressed = down ? !attackDown : tapped;
         attackDown = down;
-        if (client.player == null || client.screen != null || (!tapped && !down)) return;
+        if (client.player == null || client.gui.screen() != null || (!tapped && !down)) return;
         if (client.player.getMainHandItem().is(Aerolith.TOW_STAFF.get())) {
-            if (pressed && (client.player.isUsingItem() || aimed(1f) != null)) PacketDistributor.sendToServer(CraftClick.STAFF_ANCHOR);
+            if (pressed && (client.player.isUsingItem() || aimed(1f) != null)) ClientPacketDistributor.sendToServer(CraftClick.STAFF_ANCHOR);
             return;
         }
         CraftEditing.Located aimed = aimed(1f);
         if (aimed == null) return;
-        if (!client.player.swinging) client.player.swing(InteractionHand.MAIN_HAND);
-        send(aimed, true, false);
-    }
-
-    /** Middle click on a craft block, with the same inventory rules as vanilla pick block. */
-    private static void pick(Minecraft client, BlockState state) {
-        ItemStack stack = new ItemStack(state.getBlock());
-        if (stack.isEmpty()) return;
-        Inventory inventory = client.player.getInventory();
-        int slot = inventory.findSlotMatchingItem(stack);
-        if (client.player.getAbilities().instabuild) {
-            inventory.setPickedItem(stack);
-            client.gameMode.handleCreativeModeItemAdd(client.player.getItemInHand(InteractionHand.MAIN_HAND), 36 + inventory.selected);
-        } else if (slot != -1) {
-            if (Inventory.isHotbarSlot(slot)) inventory.selected = slot;
-            else client.gameMode.handlePickItem(slot);
-        }
+        if (!client.player.isSwinging()) client.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        send(aimed, true, false, false);
     }
 }

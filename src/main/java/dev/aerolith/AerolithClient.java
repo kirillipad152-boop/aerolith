@@ -12,11 +12,11 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
-import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 
 @EventBusSubscriber(modid = Aerolith.ID, value = Dist.CLIENT)
 public final class AerolithClient {
-    private static final String KEY_CATEGORY = "key.categories.aerolith";
+    private static final KeyMapping.Category KEY_CATEGORY = KeyMapping.Category.register(net.minecraft.resources.Identifier.fromNamespaceAndPath(Aerolith.ID, "controls"));
     private static KeyMapping throttleUp;
     private static KeyMapping throttleDown;
     private static KeyMapping rollLeft;
@@ -28,17 +28,17 @@ public final class AerolithClient {
     @SubscribeEvent
     public static void registerKeys(RegisterKeyMappingsEvent event) {
         throttleUp = new KeyMapping("key.aerolith.throttle_up", KeyConflictContext.IN_GAME,
-                InputConstants.Type.KEYSYM, InputConstants.KEY_Z, KEY_CATEGORY);
+                InputConstants.Type.KEYBOARD, InputConstants.KEY_Z, KEY_CATEGORY);
         throttleDown = new KeyMapping("key.aerolith.throttle_down", KeyConflictContext.IN_GAME,
-                InputConstants.Type.KEYSYM, InputConstants.KEY_X, KEY_CATEGORY);
+                InputConstants.Type.KEYBOARD, InputConstants.KEY_X, KEY_CATEGORY);
         rollLeft = new KeyMapping("key.aerolith.roll_left", KeyConflictContext.IN_GAME,
-                InputConstants.Type.KEYSYM, InputConstants.KEY_LEFT, KEY_CATEGORY);
+                InputConstants.Type.KEYBOARD, InputConstants.KEY_LEFT, KEY_CATEGORY);
         rollRight = new KeyMapping("key.aerolith.roll_right", KeyConflictContext.IN_GAME,
-                InputConstants.Type.KEYSYM, InputConstants.KEY_RIGHT, KEY_CATEGORY);
+                InputConstants.Type.KEYBOARD, InputConstants.KEY_RIGHT, KEY_CATEGORY);
         flapsDown = new KeyMapping("key.aerolith.flaps_down", KeyConflictContext.IN_GAME,
-                InputConstants.Type.KEYSYM, InputConstants.KEY_G, KEY_CATEGORY);
+                InputConstants.Type.KEYBOARD, InputConstants.KEY_G, KEY_CATEGORY);
         flapsUp = new KeyMapping("key.aerolith.flaps_up", KeyConflictContext.IN_GAME,
-                InputConstants.Type.KEYSYM, InputConstants.KEY_H, KEY_CATEGORY);
+                InputConstants.Type.KEYBOARD, InputConstants.KEY_H, KEY_CATEGORY);
         event.register(throttleUp);
         event.register(throttleDown);
         event.register(rollLeft);
@@ -64,7 +64,7 @@ public final class AerolithClient {
         }
 
         int bits = 0;
-        if (client.screen == null && client.getOverlay() == null && client.isWindowActive() && !client.isPaused()) {
+        if (client.gui.screen() == null && client.gui.overlay() == null && client.isWindowActive() && !client.isPaused()) {
             Options keys = client.options;
             bits = (keys.keyUp.isDown() ? PilotInput.FORWARD : 0)
                     | (keys.keyDown.isDown() ? PilotInput.BACK : 0)
@@ -77,6 +77,6 @@ public final class AerolithClient {
                     | (flapsDown.isDown() ? PilotInput.FLAPS_DOWN : 0)
                     | (flapsUp.isDown() ? PilotInput.FLAPS_UP : 0);
         }
-        PacketDistributor.sendToServer(new PilotInput(bits));
+        ClientPacketDistributor.sendToServer(new PilotInput(bits));
     }
 }

@@ -3,8 +3,8 @@
   "category": "building",
   "pattern": [" L ", "PPP"],
   "key": {
-    "L": { "item": "minecraft:leather" },
-    "P": { "tag": "minecraft:planks" }
+    "L": "minecraft:leather",
+    "P": "#minecraft:planks"
   },
   "result": { "id": "aerolith:pilot_seat", "count": 1 }
 }

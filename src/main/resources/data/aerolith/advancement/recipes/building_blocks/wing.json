@@ -7,7 +7,7 @@
     },
     "has_the_recipe": {
       "trigger": "minecraft:recipe_unlocked",
-      "conditions": { "recipe": "aerolith:wing" }
+      "conditions": { "recipes": "aerolith:wing" }
     }
   },
   "requirements": [["has_stick", "has_the_recipe"]],

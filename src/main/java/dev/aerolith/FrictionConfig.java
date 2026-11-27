@@ -8,14 +8,14 @@ import java.util.Locale;
 import java.util.Map;
 
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
 final class FrictionConfig {
     record Contact(double mu, double restitution) {}
-    private record BlockFriction(ResourceLocation id, double mu) {}
+    private record BlockFriction(Identifier id, double mu) {}
     private static final double MAX_COEFFICIENT = 3.0;
     private static final Map<Materials.Surface, ModConfigSpec.DoubleValue> COEFFICIENTS = new EnumMap<>(Materials.Surface.class);
     private static final ModConfigSpec.ConfigValue<List<? extends String>> OVERRIDES;
@@ -38,7 +38,7 @@ final class FrictionConfig {
 
     // One table per ServerLevel; a mid-world file edit must not split old hull and new terrain coefficients.
     private final Map<Materials.Surface, Double> coefficients = new EnumMap<>(Materials.Surface.class);
-    private final Map<ResourceLocation, Double> overrides;
+    private final Map<Identifier, Double> overrides;
     private final Map<Block, Contact> cache = new IdentityHashMap<>();
 
     FrictionConfig() {
@@ -49,7 +49,7 @@ final class FrictionConfig {
         for (Materials.Surface surface : Materials.Surface.values()) {
             coefficients.put(surface, SPEC.isLoaded() ? COEFFICIENTS.get(surface).get() : surface.coefficient);
         }
-        Map<ResourceLocation, Double> values = new HashMap<>();
+        Map<Identifier, Double> values = new HashMap<>();
         for (String entry : custom) {
             BlockFriction override = parse(entry);
             if (override != null) values.put(override.id, override.mu);
@@ -70,7 +70,7 @@ final class FrictionConfig {
     private static BlockFriction parse(String line) {
         int equals = line.indexOf('=');
         if (equals < 1) return null;
-        ResourceLocation id = ResourceLocation.tryParse(line.substring(0, equals).trim());
+        Identifier id = Identifier.tryParse(line.substring(0, equals).trim());
         if (id == null || id.getPath().isEmpty()) return null;
         try {
             double value = Double.parseDouble(line.substring(equals + 1).trim());

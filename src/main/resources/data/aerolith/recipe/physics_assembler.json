@@ -7,18 +7,10 @@
     "III"
   ],
   "key": {
-    "I": {
-      "item": "minecraft:iron_ingot"
-    },
-    "A": {
-      "item": "minecraft:amethyst_block"
-    },
-    "C": {
-      "item": "minecraft:copper_ingot"
-    },
-    "P": {
-      "item": "minecraft:piston"
-    }
+    "I": "minecraft:iron_ingot",
+    "A": "minecraft:amethyst_block",
+    "C": "minecraft:copper_ingot",
+    "P": "minecraft:piston"
   },
   "result": {
     "id": "aerolith:physics_assembler",

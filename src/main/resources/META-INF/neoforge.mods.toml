@@ -11,7 +11,7 @@ description="Native rigid-body physics for Minecraft."
 [[dependencies.aerolith]]
 modId="minecraft"
 type="required"
-versionRange="[1.21.1]"
+versionRange="[26.3]"
 ordering="NONE"
 side="BOTH"
 

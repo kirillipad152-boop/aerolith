@@ -1,0 +1,101 @@
+package dev.aerolith;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.function.Consumer;
+
+import net.minecraft.core.Holder;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.gametest.framework.FunctionGameTestInstance;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.TestData;
+import net.minecraft.gametest.framework.TestEnvironmentDefinition;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Rotation;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.neoforge.event.RegisterGameTestsEvent;
+import net.neoforged.neoforge.registries.DeferredRegister;
+
+final class GameTests {
+    private static final DeferredRegister<Consumer<GameTestHelper>> FUNCTIONS = DeferredRegister.create(Registries.TEST_FUNCTION, Aerolith.ID);
+    private static final List<Test> TESTS = new ArrayList<>();
+    private static final Identifier PAD = Identifier.fromNamespaceAndPath(Aerolith.ID, "test_pad");
+    /** The tests build well outside their 12-metre template; this keeps the next test's area out of reach of the last one's. */
+    private static final int PADDING = 40;
+    private record Test(ResourceKey<Consumer<GameTestHelper>> function, String batch, int ticks, boolean sky) {}
+
+    static void register(IEventBus bus) {
+        add("assemblelandsaveanddock", "default", 120, false, AerolithGameTests::assembleLandSaveAndDock);
+        add("storagekeepsitsitemsthroughassemblinganddocking", "default", 100, false, AerolithGameTests::storageKeepsItsItemsThroughAssemblingAndDocking);
+        add("partialhullvolumegeometryandmaterials", "default", 100, false, AerolithGameTests::partialHullVolumeGeometryAndMaterials);
+        add("newpartsandlegacymarkers", "default", 100, false, AerolithGameTests::newPartsAndLegacyMarkers);
+        add("itemrestsonsoliddeck", "default", 160, false, AerolithGameTests::itemRestsOnSolidDeck);
+        add("itemfallsthroughhullgap", "default", 160, false, AerolithGameTests::itemFallsThroughHullGap);
+        add("brokenmiddlesplitscraftintotwobodieswithsamemomentum", "default", 60, false, AerolithGameTests::brokenMiddleSplitsCraftIntoTwoBodiesWithSameMomentum);
+        add("playerplacesandbreaksblockswiththecrosshair", "default", 60, false, AerolithGameTests::playerPlacesAndBreaksBlocksWithTheCrosshair);
+        add("fragmentsofaspinningfallingcraftstayabovethefloor", "default", 200, false, AerolithGameTests::fragmentsOfASpinningFallingCraftStayAboveTheFloor);
+        add("uniformblocksmergeintofewcolliderswiththesamemass", "default", 100, false, AerolithGameTests::uniformBlocksMergeIntoFewCollidersWithTheSameMass);
+        add("serveracceptstheclientsblockchoicewhenitsownraymisses", "default", 60, false, AerolithGameTests::serverAcceptsTheClientsBlockChoiceWhenItsOwnRayMisses);
+        add("creativeplayersbreakablockwithonehit", "default", 60, false, AerolithGameTests::creativePlayersBreakABlockWithOneHit);
+        add("thefarendofalongcraftcanbeaimedat", "default", 100, false, AerolithGameTests::theFarEndOfALongCraftCanBeAimedAt);
+        add("atiltedblockinapitishitfromabove", "default", 100, false, AerolithGameTests::aTiltedBlockInAPitIsHitFromAbove);
+        add("acraftdroppedontoanotheronedoesnotbounce", "default", 200, false, AerolithGameTests::aCraftDroppedOntoAnotherOneDoesNotBounce);
+        add("blocksofacraftrunvanillaticks", "default", 400, false, AerolithGameTests::blocksOfACraftRunVanillaTicks);
+        add("towstaffmovesacraftonlywhileheldincreative", "default", 100, false, AerolithGameTests::towStaffMovesACraftOnlyWhileHeldInCreative);
+        add("towstaffpinstheheldcraftwithoutlosingitscollisions", "default", 140, false, AerolithGameTests::towStaffPinsTheHeldCraftWithoutLosingItsCollisions);
+        add("littntappearsonthedeckanddamagesitscraft", "default", 100, false, AerolithGameTests::litTntAppearsOnTheDeckAndDamagesItsCraft);
+        add("waterpouredintoacraftflowsandstaysinit", "default", 300, false, AerolithGameTests::waterPouredIntoACraftFlowsAndStaysInIt);
+        add("waterneverleavestheboxofacraft", "default", 400, false, AerolithGameTests::waterNeverLeavesTheBoxOfACraft);
+        add("entitiesswiminthewaterofacraft", "default", 200, false, AerolithGameTests::entitiesSwimInTheWaterOfACraft);
+        add("widecraftfallsnearthebottomoftheworld", "aerolith_height_limit", 80, false, AerolithGameTests::wideCraftFallsNearTheBottomOfTheWorld);
+        add("enginebenchmark", "aerolith_bench", 4000, false, AerolithGameTests::engineBenchmark);
+        add("breakingachestofacraftspillsitscontentsintotheworld", "default", 100, false, AerolithGameTests::breakingAChestOfACraftSpillsItsContentsIntoTheWorld);
+        add("craftssavedbeforeplotstoragemoveintoaplot", "default", 100, false, AerolithGameTests::craftsSavedBeforePlotStorageMoveIntoAPlot);
+        add("spawncommandmakesasmanycraftsofthatsize", "aerolith_spawn", 200, false, AerolithGameTests::spawnCommandMakesAsManyCraftsOfThatSize);
+        add("boundsofaturnedcrafttouchitscorners", "default", 100, false, AerolithGameTests::boundsOfATurnedCraftTouchItsCorners);
+        add("firstimpulsecannotcrossanunclaimedterraintile", "default", 100, false, AerolithGameTests::firstImpulseCannotCrossAnUnclaimedTerrainTile);
+        add("earlyplotlookuppreservessavedchestbutnotdiscardedchest", "default", 100, false, AerolithGameTests::earlyPlotLookupPreservesSavedChestButNotDiscardedChest);
+        add("entityspawningitemsarenotspentonacraft", "default", 100, false, AerolithGameTests::entitySpawningItemsAreNotSpentOnACraft);
+        add("everyblockwithashapecanbeaimedatonacraft", "default", 100, false, AerolithGameTests::everyBlockWithAShapeCanBeAimedAtOnACraft);
+        add("everysupportedblockstatecanbepickedfromeveryside", "default", 100, false, AerolithGameTests::everySupportedBlockStateCanBePickedFromEverySide);
+        add("assemblinginsideanothercraftisrefused", "default", 60, false, AerolithGameTests::assemblingInsideAnotherCraftIsRefused);
+        add("creatureondeckcountsasload", "default", 100, false, AerolithGameTests::creatureOnDeckCountsAsLoad);
+        add("goldraftsstayonanoakraftwithoutjitter", "aerolith_heavy_stack", 230, false, AerolithGameTests::goldRaftsStayOnAnOakRaftWithoutJitter);
+        add("thinwinglandsonitsownshape", "default", 120, false, AerolithGameTests::thinWingLandsOnItsOwnShape);
+        add("woodfloatsinminecraftwater", "default", 240, false, AerolithGameTests::woodFloatsInMinecraftWater);
+        add("pilotcanliftanddismount", "default", 120, true, AerolithGameTests::pilotCanLiftAndDismount);
+        add("rotatedcontactandsliderespectterrain", "default", 100, false, HullCollisionGameTests::rotatedContactAndSlideRespectTerrain);
+        add("crossaxesandhullopeningsstayempty", "default", 100, false, HullCollisionGameTests::crossAxesAndHullOpeningsStayEmpty);
+        add("placementseesbothsidesofacolumnandtrackshullchanges", "default", 100, false, HullCollisionGameTests::placementSeesBothSidesOfAColumnAndTracksHullChanges);
+        add("slabsupportsandcarriesitems", "default", 100, false, HullCollisionGameTests::slabSupportsAndCarriesItems);
+        add("translatingsidepushesinsteadofpassingthrough", "default", 100, false, HullCollisionGameTests::translatingSidePushesInsteadOfPassingThrough);
+        add("playercrouchesandpacketsrespectdeck", "default", 100, false, HullCollisionGameTests::playerCrouchesAndPacketsRespectDeck);
+        add("creaturewalksupatilteddeckwithoutslidingback", "default", 100, false, HullCollisionGameTests::creatureWalksUpATiltedDeckWithoutSlidingBack);
+        add("creaturewalkingintoahullpushesit", "default", 100, false, HullCollisionGameTests::creatureWalkingIntoAHullPushesIt);
+        add("physicsassemblerblockmakessetsrangeandunmakesacraft", "default", 300, false, PhysicsGameTests::physicsAssemblerBlockMakesSetsRangeAndUnmakesACraft);
+        add("boxindexfindsexactlywhatascanfinds", "default", 100, false, PhysicsGameTests::boxIndexFindsExactlyWhatAScanFinds);
+        add("blocksdroppedonaraftneversinkintoit", "default", 900, false, PhysicsGameTests::blocksDroppedOnARaftNeverSinkIntoIt);
+        add("controlsurfacesarefoilsoftheirownkindandturnupright", "default", 100, false, PhysicsGameTests::controlSurfacesAreFoilsOfTheirOwnKindAndTurnUpright);
+        FUNCTIONS.register(bus);
+        bus.addListener(GameTests::registerInstances);
+    }
+
+    private static void add(String name, String batch, int ticks, boolean sky, Consumer<GameTestHelper> test) {
+        var function = FUNCTIONS.register(name, () -> test);
+        TESTS.add(new Test(function.unwrapKey().orElseThrow(), batch, ticks, sky));
+    }
+
+    private static void registerInstances(RegisterGameTestsEvent event) {
+        var environments = new HashMap<String, Holder<TestEnvironmentDefinition<?>>>();
+        for (Test test : TESTS) {
+            var environment = environments.computeIfAbsent(test.batch,
+                    batch -> event.registerEnvironment(Identifier.fromNamespaceAndPath(Aerolith.ID, batch)));
+            event.registerTest(test.function.identifier(), new FunctionGameTestInstance(test.function,
+                    new TestData<>(environment, Level.OVERWORLD, PAD, test.ticks, 0, true, Rotation.NONE,
+                            false, 1, 1, test.sky, PADDING)));
+        }
+    }
+}

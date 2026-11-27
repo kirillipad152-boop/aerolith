@@ -29,7 +29,13 @@ abstract class FlowingFluidMixin {
      * the nearest edge, where a drop to nothing is "found", instead of filling the craft.
      */
     @Inject(method = "canHoldFluid", at = @At("HEAD"), cancellable = true)
-    private void aerolith$outsideIsWall(BlockGetter level, BlockPos pos, BlockState state, Fluid fluid, CallbackInfoReturnable<Boolean> callback) {
+    private static void aerolith$outsideIsWall(BlockGetter level, BlockPos pos, BlockState state, Fluid fluid, CallbackInfoReturnable<Boolean> callback) {
         if (!Plots.allowsFluid(level, pos)) callback.setReturnValue(false);
+    }
+
+    @Inject(method = "canPassThroughWall", at = @At("HEAD"), cancellable = true)
+    private static void aerolith$outsideIsNotAFlowPath(Direction direction, BlockGetter level, BlockPos from, BlockState source,
+            BlockPos to, BlockState target, CallbackInfoReturnable<Boolean> callback) {
+        if (!Plots.allowsFluid(level, to)) callback.setReturnValue(false);
     }
 }

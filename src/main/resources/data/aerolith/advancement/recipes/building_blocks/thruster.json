@@ -7,7 +7,7 @@
     },
     "has_the_recipe": {
       "trigger": "minecraft:recipe_unlocked",
-      "conditions": { "recipe": "aerolith:thruster" }
+      "conditions": { "recipes": "aerolith:thruster" }
     }
   },
   "requirements": [["has_copper_ingot", "has_the_recipe"]],

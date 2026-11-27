@@ -1,6 +1,5 @@
 package dev.aerolith;
 
-import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -23,7 +22,6 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  * again once it is part of a craft, it turns the craft back into blocks.
  */
 final class PhysicsAssemblerBlock extends Block {
-    private static final MapCodec<PhysicsAssemblerBlock> CODEC = simpleCodec(PhysicsAssemblerBlock::new);
     /** Blocks it reaches on each axis from itself, for each setting. 50 is a cube of just over a million blocks. */
     static final int[] RADII = {1, 2, 4, 8, 16, 32, 50};
     static final IntegerProperty RANGE = IntegerProperty.create("range", 0, RADII.length - 1);
@@ -33,11 +31,6 @@ final class PhysicsAssemblerBlock extends Block {
     PhysicsAssemblerBlock(Properties properties) {
         super(properties);
         registerDefaultState(stateDefinition.any().setValue(RANGE, 2));
-    }
-
-    @Override
-    protected MapCodec<PhysicsAssemblerBlock> codec() {
-        return CODEC;
     }
 
     @Override
@@ -52,9 +45,9 @@ final class PhysicsAssemblerBlock extends Block {
 
     @Override
     protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
-        if (level.isClientSide) return InteractionResult.SUCCESS;
+        if (level.isClientSide()) return InteractionResult.SUCCESS;
         if (!(player instanceof ServerPlayer who) || who.isSpectator()) return InteractionResult.PASS;
-        if (Plots.isPlot(level) && Plots.inGrid(pos)) {
+        if (Plots.isPlot(level) && (level.dimension() == Plots.DIMENSION || Plots.inGrid(pos))) {
             // Part of a craft: the craft's blocks are in the plot dimension, the craft itself is in the world.
             CraftEntity craft = Plots.craftAt(pos);
             if (craft == null || !(craft.level() instanceof ServerLevel world)) return InteractionResult.PASS;

@@ -14,7 +14,7 @@
     "has_the_recipe": {
       "trigger": "minecraft:recipe_unlocked",
       "conditions": {
-        "recipe": "aerolith:physics_assembler"
+        "recipes": "aerolith:physics_assembler"
       }
     }
   },

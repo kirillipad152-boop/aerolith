@@ -7,7 +7,7 @@
   "block.aerolith.thruster": "Thruster",
   "block.aerolith.wing": "Wing",
   "entity.aerolith.craft": "Aerolith Craft",
-  "key.categories.aerolith": "Aerolith",
+  "key.category.aerolith.controls": "Aerolith",
   "key.aerolith.throttle_up": "Increase Throttle",
   "key.aerolith.throttle_down": "Decrease Throttle",
   "message.aerolith.corner": "First corner: %1$s, %2$s, %3$s.",

@@ -1,13 +1,13 @@
 plugins {
     id 'java-library'
-    id 'net.neoforged.moddev' version '2.0.141'
+    id 'net.neoforged.moddev' version '2.0.148'
 }
 
 group = 'dev.aerolith'
 version = '0.3.0'
-java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
-def neoVersion = '21.1.249'
+def neoVersion = '26.3.0.118'
 neoForge {
     version = neoVersion
 
@@ -17,35 +17,22 @@ neoForge {
             server()
             programArgument '--nogui'
         }
-        gameTestServer { type = 'gameTestServer' }
-        // Create's own packets cannot reach the mock players of the other tests, so its tests run alone.
-        createGameTestServer {
+        gameTestServer {
             type = 'gameTestServer'
-            gameDirectory = project.file('run/createGameTestServer')
+            programArgument '--tests'
+            programArgument 'aerolith:*'
+            programArgument '--report'
+            programArgument 'aerolith-gametest.xml'
         }
         configureEach {
             gameDirectory = project.file("run/$name")
-            systemProperty 'neoforge.enabledGameTestNamespaces', name == 'createGameTestServer' ? 'aerolith_create' : 'aerolith'
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'aerolith'
         }
     }
 
     mods {
         aerolith { sourceSet sourceSets.main }
     }
-}
-
-repositories {
-    // Create is only compiled against: it is not needed, and not required, to run Aerolith.
-    maven {
-        url = 'https://maven.createmod.net'
-        content { includeGroup 'com.simibubi.create'; includeGroup 'net.createmod.ponder'; includeGroup 'dev.engine-room.flywheel' }
-    }
-}
-
-dependencies {
-    compileOnly 'com.simibubi.create:create-1.21.1:6.0.10-281:slim'
-    compileOnly 'net.createmod.ponder:ponder-neoforge:1.0.85+mc1.21.1'
-    compileOnly 'dev.engine-room.flywheel:flywheel-neoforge-api-1.21.1:1.0.6'
 }
 
 def osName = System.getProperty('os.name').toLowerCase(Locale.ROOT)
@@ -94,7 +81,7 @@ tasks.named('test', Test) {
 def nativeSmoke = tasks.register('nativeSmoke', JavaExec) {
     mainClass = 'dev.aerolith.NativeSmoke'
     classpath(sourceSets.test.output, tasks.named('jar', Jar))
-    jvmArgs '-Xcheck:jni'
+    jvmArgs '-Xcheck:jni', '--enable-native-access=ALL-UNNAMED'
 }
 
 tasks.named('check') { dependsOn nativeSmoke }
