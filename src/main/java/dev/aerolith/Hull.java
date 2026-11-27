@@ -15,6 +15,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -29,7 +30,7 @@ final class Hull {
     static final double DEFAULT_DENSITY = 800.0;
     private static final Direction[] FACES = Direction.values();
 
-    final List<CraftBlock> blocks;
+    volatile List<CraftBlock> blocks;
     final Vec3 localCom;
     final double radius;
     final double mass;
@@ -41,7 +42,7 @@ final class Hull {
     private record Part(CraftBlock owner, AABB box, double density) {}
 
     /** Shapes that can be aimed at but are not solid: torches, levers, signs, and fluids. */
-    private final List<Part> pickParts;
+    private volatile List<Part> pickParts;
     private final List<Part> fluidParts;
 
     Hull(List<CraftBlock> blocks) {
@@ -107,6 +108,30 @@ final class Hull {
         this.radius = extent;
         this.localBounds = bounds;
         this.surfaces = surfaces.toDoubleArray();
+    }
+
+    /**
+     * Takes in blocks that have no collision shape (a placed lever, a wire, a torch): they have no mass and touch nothing, so
+     * all that changes is what can be aimed at. Nothing the physics engine holds is rebuilt, which on a large craft is the
+     * difference between a few microseconds and many milliseconds for every block placed.
+     */
+    void updateWithoutCollision(Map<BlockPos, BlockState> changes) {
+        List<CraftBlock> nextBlocks = new ArrayList<>(blocks.size() + changes.size());
+        for (CraftBlock block : blocks) {
+            if (!changes.containsKey(block.offset())) nextBlocks.add(block);
+        }
+        List<Part> nextPicks = new ArrayList<>(pickParts.size() + changes.size());
+        for (Part part : pickParts) {
+            if (!changes.containsKey(part.owner.offset())) nextPicks.add(part);
+        }
+        for (Map.Entry<BlockPos, BlockState> change : changes.entrySet()) {
+            CraftBlock block = new CraftBlock(change.getKey(), change.getValue());
+            nextBlocks.add(block);
+            Vec3 offset = Vec3.atLowerCornerOf(block.offset()).subtract(0.5, 0.5, 0.5);
+            for (AABB b : Materials.outline(block.state())) nextPicks.add(new Part(block, b.move(offset), 0.0));
+        }
+        pickParts = List.copyOf(nextPicks);
+        blocks = List.copyOf(nextBlocks);
     }
 
     private double[] displayBoxes;

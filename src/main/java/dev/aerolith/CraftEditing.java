@@ -391,8 +391,12 @@ final class CraftEditing {
         craft.clearDirty();
         ServerLevel plot = craft.plotLevel();
         if (plot == null) return;
+        long begun = Perf.begin();
         List<CraftBlock> blocks = craft.cellBlocks(false);
+        Perf.end("server.settle.cells", begun);
+        begun = Perf.begin();
         List<List<CraftBlock>> groups = Hull.components(blocks);
+        Perf.end("server.settle.components", begun);
         List<List<CraftBlock>> solid = groups.stream().filter(CraftEditing::hasSolid).toList();
         if (solid.isEmpty()) {
             craft.dissolve();

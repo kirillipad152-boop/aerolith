@@ -75,6 +75,8 @@ final class GameTests {
         add("creaturewalkingintoahullpushesit", "default", 100, false, HullCollisionGameTests::creatureWalkingIntoAHullPushesIt);
         add("physicsassemblerblockmakessetsrangeandunmakesacraft", "default", 300, false, PhysicsGameTests::physicsAssemblerBlockMakesSetsRangeAndUnmakesACraft);
         add("boxindexfindsexactlywhatascanfinds", "default", 100, false, PhysicsGameTests::boxIndexFindsExactlyWhatAScanFinds);
+        add("raftwithredstoneassemblesanddocksback", "aerolith_redstone", 300, false, PhysicsGameTests::raftWithRedstoneAssemblesAndDocksBack);
+        add("redstoneonacraftdoesnotrebuilditshull", "aerolith_redstone", 300, false, PhysicsGameTests::redstoneOnACraftDoesNotRebuildItsHull);
         add("blocksdroppedonaraftneversinkintoit", "default", 900, false, PhysicsGameTests::blocksDroppedOnARaftNeverSinkIntoIt);
         FUNCTIONS.register(bus);
         bus.addListener(GameTests::registerInstances);

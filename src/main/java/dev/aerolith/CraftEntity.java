@@ -82,6 +82,8 @@ public final class CraftEntity extends Entity {
     private final LongSet chunkKeys = new LongOpenHashSet();
     private final LongLinkedOpenHashSet changed = new LongLinkedOpenHashSet();
     private boolean hullDirty;
+    /** Blocks without a collision shape that came or changed since the hull was last brought up to date: offset to state. */
+    private final Map<BlockPos, BlockState> pendingAim = new HashMap<>();
     private boolean ticketed;
     /** The box of block offsets, inclusive, that fluid may fill: whatever the craft's blocks span. */
     private BlockPos boundsMin = BlockPos.ZERO;
@@ -191,6 +193,7 @@ public final class CraftEntity extends Entity {
     }
 
     private void buildHull() {
+        pendingAim.clear();
         List<CraftBlock> blocks = cellBlocks(false);
         updateBounds(blocks);
         if (blocks.stream().noneMatch(block -> solid(block.state()))) {
@@ -234,7 +237,34 @@ public final class CraftEntity extends Entity {
         long key = PlotGrid.chunkKey(pos);
         if (chunkKeys.add(key) && ticketed) PlotChunks.keep(plotLevel(), key);
         changed.add(pos.asLong());
-        if (old != now && (!isFluid(old) && !old.isAir() || !isFluid(now) && !now.isAir())) hullDirty = true;
+        noteChange(offset, old, now);
+    }
+
+    /** What a change of one block does to the hull. */
+    private void noteChange(BlockPos offset, BlockState old, BlockState now) {
+        if (old == now) return;
+        boolean wasBlock = old != null && !old.isAir() && !isFluid(old);
+        boolean isBlock = !now.isAir() && !isFluid(now);
+        if (!wasBlock && !isBlock) return;
+        // The same block with the same shapes, only another state of it: redstone power, a lit lamp, a lever. Nothing to redo.
+        if (wasBlock && isBlock && Materials.samePhysics(old, now)) return;
+        // A block without a collision shape placed in the air, or replacing another one: only the aim changes.
+        if (isBlock && !Materials.hasCollision(now) && (!wasBlock || !Materials.hasCollision(old))) {
+            if (!hullDirty) pendingAim.put(offset.immutable(), now);
+            return;
+        }
+        hullDirty = true;
+    }
+
+    /** Takes in the blocks that only change what is aimed at. */
+    private void applyAim() {
+        if (pendingAim.isEmpty()) return;
+        if (hull != null) {
+            hull.updateWithoutCollision(pendingAim);
+            updateBounds(hull.blocks);
+            reapplyPosition();
+        }
+        pendingAim.clear();
     }
 
     /** What an entity feels from the fluid in this craft's plot: per fluid type, how deep it is and which way it pushes. */
@@ -330,6 +360,7 @@ public final class CraftEntity extends Entity {
 
     void clearDirty() {
         hullDirty = false;
+        pendingAim.clear();
     }
 
     /** Applies pending block changes to the hull and tells clients about them. */
@@ -339,6 +370,10 @@ public final class CraftEntity extends Entity {
             long start = Perf.begin();
             CraftEditing.settle(server, this);
             Perf.end("server.settle", start);
+        } else if (!pendingAim.isEmpty()) {
+            long start = Perf.begin();
+            applyAim();
+            Perf.end("server.settle-aim", start);
         }
         if (changed.isEmpty()) return;
         long start = Perf.begin();
@@ -355,7 +390,10 @@ public final class CraftEntity extends Entity {
 
     /** Replaces the blocks of a live craft, keeping its momentum. */
     void edit(List<CraftBlock> blocks, List<CraftBlock> fluids) {
+        pendingAim.clear();
+        long begun = Perf.begin();
         Hull next = new Hull(blocks, fluids);
+        Perf.end("server.settle.hull", begun);
         updateBounds(blocks);
         Vec3 shift = Hull.rotate(motionRotation(), next.localCom.subtract(hull.localCom));
         Vec3 velocity = comVelocity().add(angularVelocity().cross(shift));
@@ -364,7 +402,11 @@ public final class CraftEntity extends Entity {
         motion[9] = velocity.z;
         hull = next;
         reapplyPosition();
-        if (level() instanceof ServerLevel server) WorldPhysics.of(server).rebuild(this);
+        if (level() instanceof ServerLevel server) {
+            begun = Perf.begin();
+            WorldPhysics.of(server).rebuild(this);
+            Perf.end("server.settle.engine", begun);
+        }
     }
 
     /** Breaks every block that is left, with drops, and removes the craft. */
@@ -465,7 +507,7 @@ public final class CraftEntity extends Entity {
     void clientChanged(BlockPos pos, BlockState now) {
         BlockPos offset = pos.subtract(plotOrigin);
         BlockState old = now.isAir() ? cells.remove(offset) : cells.put(offset.immutable(), now);
-        if (old != now && (old != null && !isFluid(old) || !now.isAir() && !isFluid(now))) hullDirty = true;
+        noteChange(offset, old, now);
     }
 
     public List<CraftBlock> blocks() {
@@ -504,6 +546,8 @@ public final class CraftEntity extends Entity {
             if (hullDirty) {
                 hullDirty = false;
                 buildHull();
+            } else {
+                applyAim();
             }
             Vec3 prior = position();
             previousRotation.set(viewRotation);

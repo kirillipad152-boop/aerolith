@@ -1,0 +1,17 @@
+#!/bin/sh
+# Linker for x86_64-pc-windows-gnu built on a Linux or macOS machine: Zig brings the MinGW-w64 headers and import
+# libraries (`pip install ziglang`). Set AEROLITH_ZIG_PYTHON to the Python that has it; the default is python3.
+#
+# rustc hands the linker a module-definition file of the exports as "-Wl,<path>.def", which zig cc refuses: every symbol
+# is exported instead, which includes the JNI entry points. libgcc and libpthread are not part of Zig's MinGW, so its
+# compiler runtime and libunwind stand in for them, and the C runtime and MinGW support libraries are supplied by Zig
+# on its own.
+for arg in "$@"; do
+    shift
+    case "$arg" in
+        -Wl,*.def|-lgcc|-l:libpthread.a|-lmsvcrt|-lmingw32|-lmingwex) ;;
+        -lgcc_eh) set -- "$@" -lunwind ;;
+        *) set -- "$@" "$arg" ;;
+    esac
+done
+exec "${AEROLITH_ZIG_PYTHON:-python3}" -m ziglang cc -target x86_64-windows-gnu -Wl,--export-all-symbols "$@"
