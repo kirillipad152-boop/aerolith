@@ -1,7 +1,0 @@
-{
-  "parent": "aerolith:block/control_surface_flat",
-  "textures": {
-    "surface": "minecraft:block/light_blue_concrete",
-    "edge": "minecraft:block/spruce_planks"
-  }
-}

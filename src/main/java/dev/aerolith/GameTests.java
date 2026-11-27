@@ -31,7 +31,6 @@ final class GameTests {
         add("assemblelandsaveanddock", "default", 120, false, AerolithGameTests::assembleLandSaveAndDock);
         add("storagekeepsitsitemsthroughassemblinganddocking", "default", 100, false, AerolithGameTests::storageKeepsItsItemsThroughAssemblingAndDocking);
         add("partialhullvolumegeometryandmaterials", "default", 100, false, AerolithGameTests::partialHullVolumeGeometryAndMaterials);
-        add("newpartsandlegacymarkers", "default", 100, false, AerolithGameTests::newPartsAndLegacyMarkers);
         add("itemrestsonsoliddeck", "default", 160, false, AerolithGameTests::itemRestsOnSolidDeck);
         add("itemfallsthroughhullgap", "default", 160, false, AerolithGameTests::itemFallsThroughHullGap);
         add("brokenmiddlesplitscraftintotwobodieswithsamemomentum", "default", 60, false, AerolithGameTests::brokenMiddleSplitsCraftIntoTwoBodiesWithSameMomentum);
@@ -64,9 +63,8 @@ final class GameTests {
         add("assemblinginsideanothercraftisrefused", "default", 60, false, AerolithGameTests::assemblingInsideAnotherCraftIsRefused);
         add("creatureondeckcountsasload", "default", 100, false, AerolithGameTests::creatureOnDeckCountsAsLoad);
         add("goldraftsstayonanoakraftwithoutjitter", "aerolith_heavy_stack", 230, false, AerolithGameTests::goldRaftsStayOnAnOakRaftWithoutJitter);
-        add("thinwinglandsonitsownshape", "default", 120, false, AerolithGameTests::thinWingLandsOnItsOwnShape);
+        add("thinblocklandsonitsownshape", "default", 120, false, AerolithGameTests::thinBlockLandsOnItsOwnShape);
         add("woodfloatsinminecraftwater", "default", 240, false, AerolithGameTests::woodFloatsInMinecraftWater);
-        add("pilotcanliftanddismount", "default", 120, true, AerolithGameTests::pilotCanLiftAndDismount);
         add("rotatedcontactandsliderespectterrain", "default", 100, false, HullCollisionGameTests::rotatedContactAndSlideRespectTerrain);
         add("crossaxesandhullopeningsstayempty", "default", 100, false, HullCollisionGameTests::crossAxesAndHullOpeningsStayEmpty);
         add("placementseesbothsidesofacolumnandtrackshullchanges", "default", 100, false, HullCollisionGameTests::placementSeesBothSidesOfAColumnAndTracksHullChanges);
@@ -78,7 +76,6 @@ final class GameTests {
         add("physicsassemblerblockmakessetsrangeandunmakesacraft", "default", 300, false, PhysicsGameTests::physicsAssemblerBlockMakesSetsRangeAndUnmakesACraft);
         add("boxindexfindsexactlywhatascanfinds", "default", 100, false, PhysicsGameTests::boxIndexFindsExactlyWhatAScanFinds);
         add("blocksdroppedonaraftneversinkintoit", "default", 900, false, PhysicsGameTests::blocksDroppedOnARaftNeverSinkIntoIt);
-        add("controlsurfacesarefoilsoftheirownkindandturnupright", "default", 100, false, PhysicsGameTests::controlSurfacesAreFoilsOfTheirOwnKindAndTurnUpright);
         FUNCTIONS.register(bus);
         bus.addListener(GameTests::registerInstances);
     }

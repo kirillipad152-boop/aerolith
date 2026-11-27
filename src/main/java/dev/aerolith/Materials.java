@@ -32,8 +32,7 @@ final class Materials {
             Map.entry(Blocks.GLASS, 2500.0), Map.entry(Blocks.DIRT, 1350.0),
             Map.entry(Blocks.IRON_BLOCK, 7870.0), Map.entry(Blocks.GOLD_BLOCK, 19300.0),
             Map.entry(Blocks.PACKED_ICE, 920.0), Map.entry(Blocks.BLUE_ICE, 925.0), Map.entry(Blocks.ICE, 917.0),
-            Map.entry(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.RED), 90.0), Map.entry(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.ORANGE), 180.0),
-            Map.entry(Blocks.GLAZED_TERRACOTTA.pick(net.minecraft.world.item.DyeColor.LIME), 200.0), Map.entry(Blocks.SLIME_BLOCK, 1150.0)
+            Map.entry(Blocks.SLIME_BLOCK, 1150.0)
     );
     private static final Set<String> ROCK = Set.of("andesite", "polished_andesite", "diorite", "polished_diorite",
             "granite", "polished_granite", "tuff", "polished_tuff", "blackstone", "polished_blackstone",
@@ -52,9 +51,6 @@ final class Materials {
         String path = id.getPath();
         if (id.getNamespace().equals(Aerolith.ID)) {
             return switch (path) {
-                case "pilot_seat" -> 90.0;
-                case "thruster" -> 180.0;
-                case "wing", "elevator", "rudder", "aileron", "flap" -> 160.0;
                 default -> 0.0;
             };
         }
@@ -112,8 +108,6 @@ final class Materials {
         Identifier id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
         if (id.getNamespace().equals(Aerolith.ID)) {
             return switch (id.getPath()) {
-                case "pilot_seat", "wing", "elevator", "rudder", "aileron", "flap" -> Surface.WOOD;
-                case "thruster" -> Surface.METAL;
                 default -> Surface.DEFAULT;
             };
         }

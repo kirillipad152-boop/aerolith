@@ -39,7 +39,7 @@ public final class Aerolith {
         container.registerConfig(ModConfig.Type.SYNCED, FrictionConfig.SPEC, "aerolith-server.toml");
         modBus.addListener(Aerolith::creativeTab);
         modBus.addListener(AerolithParts::creativeTab);
-        modBus.addListener(PilotInput::register);
+        modBus.addListener(Network::register);
         NeoForge.EVENT_BUS.addListener(WorldPhysics::onJoin);
         NeoForge.EVENT_BUS.addListener(WorldPhysics::onLeave);
         NeoForge.EVENT_BUS.addListener(WorldPhysics::onTick);

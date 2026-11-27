@@ -64,42 +64,6 @@ public final class PhysicsGameTests {
         }).thenSucceed();
     }
 
-    public static void controlSurfacesAreFoilsOfTheirOwnKindAndTurnUpright(GameTestHelper test) {
-        for (String part : java.util.List.of("elevator", "rudder", "aileron", "flap")) {
-            test.assertTrue(test.getLevel().getServer().getRecipeManager().byKey(net.minecraft.resources.ResourceKey.create(
-                    net.minecraft.core.registries.Registries.RECIPE, net.minecraft.resources.Identifier.fromNamespaceAndPath(Aerolith.ID, part))).isPresent(),
-                    "Missing survival recipe for " + part);
-        }
-        record Case(net.neoforged.neoforge.registries.DeferredBlock<ControlSurfaceBlock> block, int kind) {}
-        for (Case part : java.util.List.of(new Case(AerolithParts.ELEVATOR, 3), new Case(AerolithParts.RUDDER, 4),
-                new Case(AerolithParts.AILERON, 5), new Case(AerolithParts.FLAP, 6))) {
-            var flat = part.block().get().defaultBlockState();
-            var upright = flat.setValue(ControlSurfaceBlock.NORMAL, Direction.Axis.X);
-            Hull a = new Hull(java.util.List.of(new CraftBlock(BlockPos.ZERO, flat)));
-            Hull b = new Hull(java.util.List.of(new CraftBlock(BlockPos.ZERO, upright)));
-            test.assertTrue(Math.abs(a.mass - 20.0) < 1e-7 && Math.abs(b.mass - 20.0) < 1e-7, "A control surface must weigh what a wing does");
-            test.assertTrue(a.surfaces.length == 8 && a.surfaces[0] == part.kind() && a.surfaces[4] == 0 && a.surfaces[5] == 1 && a.surfaces[6] == 0,
-                    "A flat control surface of kind " + part.kind() + " must be a foil lifting along +Y");
-            test.assertTrue(b.surfaces.length == 8 && b.surfaces[0] == part.kind() && b.surfaces[4] == 1 && b.surfaces[5] == 0 && b.surfaces[6] == 0,
-                    "An upright control surface of kind " + part.kind() + " must be a foil lifting along +X");
-            var flatBox = flat.getCollisionShape(test.getLevel(), BlockPos.ZERO).bounds();
-            var uprightBox = upright.getCollisionShape(test.getLevel(), BlockPos.ZERO).bounds();
-            test.assertTrue(Math.abs(flatBox.getYsize() - 0.125) < 1e-9 && Math.abs(uprightBox.getXsize() - 0.125) < 1e-9
-                    && Math.abs(uprightBox.getYsize() - 1.0) < 1e-9, "A control surface is a plate an eighth of a block thick");
-        }
-        // Boxed in by blocks on both sides along its normal, a surface is no longer in the air.
-        Hull covered = new Hull(java.util.List.of(new CraftBlock(BlockPos.ZERO, AerolithParts.ELEVATOR.get().defaultBlockState()),
-                new CraftBlock(BlockPos.ZERO.above(), Blocks.OAK_PLANKS.defaultBlockState())));
-        boolean foil = false;
-        for (int i = 0; i < covered.surfaces.length; i += 8) foil |= covered.surfaces[i] == 3;
-        test.assertTrue(!foil, "An elevator with a block on top of it must not act as a foil");
-        // Every pilot key reaches the craft, and no others.
-        test.assertTrue((PilotInput.VALID_BITS & (PilotInput.ROLL_LEFT | PilotInput.ROLL_RIGHT | PilotInput.FLAPS_DOWN | PilotInput.FLAPS_UP))
-                == (PilotInput.ROLL_LEFT | PilotInput.ROLL_RIGHT | PilotInput.FLAPS_DOWN | PilotInput.FLAPS_UP), "Roll and flap keys must be accepted");
-        test.assertTrue((PilotInput.VALID_BITS & 1024) == 0, "An unknown key bit must be refused");
-        test.succeed();
-    }
-
     /** Single-block crafts dropped from every height and at every turn onto a raft must never end up inside it. */
     public static void blocksDroppedOnARaftNeverSinkIntoIt(GameTestHelper test) {
         ServerLevel level = test.getLevel();

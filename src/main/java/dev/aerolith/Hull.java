@@ -33,12 +33,10 @@ final class Hull {
     final Vec3 localCom;
     final double radius;
     final double mass;
-    final Vec3 seat;
     final AABB localBounds;
     final List<AABB> collisionBoxes;
     private final List<Part> parts;
     final double[] surfaces;
-    final boolean powered;
 
     private record Part(CraftBlock owner, AABB box, double density) {}
 
@@ -86,47 +84,15 @@ final class Hull {
             weighted = weighted.add(box.getCenter().scale(mass));
             bounds = bounds == null ? box : bounds.minmax(box);
         }
-        Vec3 seat = null;
-        boolean powered = false;
 
         for (CraftBlock block : blocks) {
             BlockPos p = block.offset();
             Vec3 center = Vec3.atLowerCornerOf(p);
-            if (seat == null && (block.state().is(AerolithParts.SEAT.get()) || block.state().is(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.RED)))
-                    && !cells.containsKey(p.above()) && !cells.containsKey(p.above(2))) {
-                double top = cells.get(p).stream().mapToDouble(b -> b.maxY).max().orElse(p.getY() + 0.5);
-                seat = new Vec3(center.x, top + 0.03, center.z);
-            }
-
-            Direction foilNormal = block.state().is(AerolithParts.WING.get()) || block.state().is(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.LIGHT_BLUE))
-                    ? Direction.UP
-                    : block.state().is(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.YELLOW)) ? Direction.EAST : null;
-            int foilKind = 1;
-            if (block.state().getBlock() instanceof ControlSurfaceBlock control) {
-                foilNormal = ControlSurfaceBlock.normal(block.state());
-                foilKind = control.kind();
-            }
-            if (foilNormal != null && !cells.containsKey(p.relative(foilNormal))
-                    && !cells.containsKey(p.relative(foilNormal.getOpposite()))) {
-                // shortcut: foil-marked cubes are modeled as flat one-square-metre surfaces, upgrade to actual profiles for configurable parts.
-                surface(surfaces, foilKind, center, foilNormal, 1.0);
-            } else {
-                List<AABB> own = cells.get(p);
-                for (AABB box : own) {
-                    for (Direction face : FACES) {
-                        exposedFace(surfaces, box, face, own, cells.getOrDefault(p.relative(face), List.of()));
-                    }
+            List<AABB> own = cells.get(p);
+            for (AABB box : own) {
+                for (Direction face : FACES) {
+                    exposedFace(surfaces, box, face, own, cells.getOrDefault(p.relative(face), List.of()));
                 }
-            }
-
-            boolean engine = block.state().is(AerolithParts.THRUSTER.get());
-            Direction thrust = block.state().is(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.ORANGE)) ? Direction.UP
-                    : block.state().is(Blocks.GLAZED_TERRACOTTA.pick(net.minecraft.world.item.DyeColor.LIME))
-                        ? block.state().getValue(HorizontalDirectionalBlock.FACING)
-                        : engine ? block.state().getValue(BlockStateProperties.FACING) : null;
-            if (thrust != null && !cells.containsKey(p.relative(thrust.getOpposite()))) {
-                surface(surfaces, 2, center, thrust, engine ? 10000.0 : thrust == Direction.UP ? 9000.0 : 11000.0);
-                powered = true;
             }
         }
         if (kg <= 0.0 || bounds == null) throw new IllegalArgumentException("A hull needs at least one solid block");
@@ -139,10 +105,8 @@ final class Hull {
                     Math.abs(d.y) + box.getYsize() * 0.5, Math.abs(d.z) + box.getZsize() * 0.5).length());
         }
         this.radius = extent;
-        this.seat = seat;
         this.localBounds = bounds;
         this.surfaces = surfaces.toDoubleArray();
-        this.powered = powered;
     }
 
     private double[] displayBoxes;

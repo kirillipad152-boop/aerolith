@@ -1,7 +1,0 @@
-{
-  "parent": "aerolith:block/control_surface_upright",
-  "textures": {
-    "surface": "minecraft:block/orange_concrete",
-    "edge": "minecraft:block/spruce_planks"
-  }
-}
