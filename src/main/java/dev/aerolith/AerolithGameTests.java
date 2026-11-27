@@ -512,7 +512,7 @@ public final class AerolithGameTests {
         player.setXRot(-30);
         Vec3[] pinned = {null};
         CraftEntity[] landing = {null};
-        test.startSequence().thenIdle(8).thenExecute(() -> {
+        test.startSequence().thenIdle(2).thenExecute(() -> {
             test.assertTrue(craft.speed() > 0.5, "The test craft must be moving when pinned");
             player.setYRot(90); // No longer aiming at it: the press still applies to the held craft.
             physics.staffInput(player, TowStaffInput.PIN);
@@ -571,6 +571,35 @@ public final class AerolithGameTests {
         }).thenExecute(() -> player.setItemInHand(InteractionHand.OFF_HAND, ItemStack.EMPTY))
                 .thenWaitUntil(() -> test.assertTrue(craft.staffHolder() < 0, "Putting away the staff did not release the craft"))
                 .thenExecute(craft::discard).thenSucceed();
+    }
+
+    @GameTest(template = "test_pad", timeoutTicks = 100)
+    public static void towStaffKeepsUpWithAFastCursor(GameTestHelper test) {
+        var level = test.getLevel();
+        var player = editor(level);
+        player.setGameMode(GameType.CREATIVE);
+        player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Aerolith.TOW_STAFF.get()));
+        Vec3 start = test.absoluteVec(new Vec3(5.5, 8.5, 5.5));
+        CraftEntity craft = StructureTransfer.create(level, List.of(new CraftBlock(BlockPos.ZERO, Blocks.OAK_PLANKS.defaultBlockState())),
+                start, player.getUUID());
+        test.assertTrue(craft != null, "Cannot create the craft to drag");
+        player.setPos(craft.position().add(0, -player.getEyeHeight(), -3));
+        player.setYRot(0);
+        player.setXRot(0);
+        WorldPhysics physics = WorldPhysics.of(level);
+        physics.staffInput(player, TowStaffInput.TOGGLE);
+        test.assertTrue(craft.staffHolder() == player.getId(), "The staff did not grab the craft");
+        physics.staffInput(player, TowStaffInput.adjust(30, 0, 0));
+        player.setXRot(-90);
+        // Reaching a far cursor is limited by the test area, so the speed the craft gets up to is measured (the old pull stopped at 6 m/s).
+        double[] fastest = {0};
+        test.startSequence().thenWaitUntil(() -> {
+            fastest[0] = Math.max(fastest[0], craft.speed());
+            test.assertTrue(fastest[0] > 20, "The craft did not keep up with the cursor: fastest " + fastest[0] + " m/s, holder " + craft.staffHolder());
+        }).thenExecute(() -> {
+            physics.staffInput(player, TowStaffInput.TOGGLE);
+            craft.discard();
+        }).thenSucceed();
     }
 
     @GameTest(template = "test_pad", timeoutTicks = 100)

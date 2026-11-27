@@ -294,9 +294,10 @@ public final class WorldPhysics {
             release(body);
             return;
         }
-        Vec3 velocity = eye.add(player.getViewVector(1).scale(grab.distance)).subtract(point).scale(4);
-        if (velocity.lengthSqr() > 36) velocity = velocity.normalize().scale(6);
-        Vec3 impulse = velocity.subtract(craft.comVelocity()).scale(0.5).add(0, 9.81 * 0.05, 0).scale(craft.hull().mass);
+        // The grip closes on the cursor in about two ticks and follows it at up to 60 m/s (the engine's own cap is 80).
+        Vec3 velocity = eye.add(player.getViewVector(1).scale(grab.distance)).subtract(point).scale(10);
+        if (velocity.lengthSqr() > 3600) velocity = velocity.normalize().scale(60);
+        Vec3 impulse = velocity.subtract(craft.comVelocity()).scale(0.9).add(0, 9.81 * 0.05, 0).scale(craft.hull().mass);
         Quaternionf rotation = grab.rotation;
         NativePhysics.staffPull(world, body.id, impulse.x, impulse.y, impulse.z, rotation.x, rotation.y, rotation.z, rotation.w);
     }
