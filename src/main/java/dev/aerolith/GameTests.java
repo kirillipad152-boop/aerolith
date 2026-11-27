@@ -46,6 +46,7 @@ final class GameTests {
         add("towstaffmovesacraftonlywhileheldincreative", "default", 100, false, AerolithGameTests::towStaffMovesACraftOnlyWhileHeldInCreative);
         add("towstaffpinstheheldcraftwithoutlosingitscollisions", "default", 140, false, AerolithGameTests::towStaffPinsTheHeldCraftWithoutLosingItsCollisions);
         add("towstaffadjustsdistanceandrotates", "default", 100, false, AerolithGameTests::towStaffAdjustsDistanceAndRotates);
+        add("towstaffkeepsupwithafastcursor", "default", 100, false, AerolithGameTests::towStaffKeepsUpWithAFastCursor);
         add("littntappearsonthedeckanddamagesitscraft", "default", 100, false, AerolithGameTests::litTntAppearsOnTheDeckAndDamagesItsCraft);
         add("waterpouredintoacraftflowsandstaysinit", "default", 300, false, AerolithGameTests::waterPouredIntoACraftFlowsAndStaysInIt);
         add("waterneverleavestheboxofacraft", "default", 400, false, AerolithGameTests::waterNeverLeavesTheBoxOfACraft);

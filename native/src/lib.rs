@@ -516,10 +516,10 @@ impl World {
         }
         let body = &mut self.bodies[craft.handle];
         let error = UnitQuaternion::new_normalize(orientation) * body.rotation().inverse();
-        let desired = limit(error.scaled_axis() * 4.0, craft.max_spin.min(1.4));
+        let desired = limit(error.scaled_axis() * 8.0, craft.max_spin.min(3.0));
         // Use world-space inertia so the motor turns different hulls at the same rate without setting their pose.
         let torque =
-            body.mass_properties().effective_angular_inertia() * ((desired - body.angvel()) * 0.5);
+            body.mass_properties().effective_angular_inertia() * ((desired - body.angvel()) * 0.8);
         body.apply_impulse(impulse, true);
         body.apply_torque_impulse(torque, true);
         cap_velocities(body, craft.max_spin)
