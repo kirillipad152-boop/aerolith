@@ -470,18 +470,24 @@ public final class AerolithGameTests {
         player.setPos(craft.position().add(0, 0.65 - player.getEyeHeight(), -3));
         player.setYRot(0);
         player.setXRot(12);
+        WorldPhysics physics = WorldPhysics.of(test.getLevel());
         player.setGameMode(GameType.SURVIVAL);
-        craft.interact(player, InteractionHand.MAIN_HAND);
-        test.assertTrue(!player.isUsingItem(), "The staff grabbed a craft in survival");
+        physics.staffInput(player, TowStaffInput.TOGGLE);
+        test.assertTrue(craft.staffHolder() < 0, "The staff grabbed a craft in survival");
         player.setGameMode(GameType.CREATIVE);
-        craft.interact(player, InteractionHand.MAIN_HAND);
-        test.assertTrue(player.isUsingItem(), "The staff did not grab an aimed-at craft in creative");
+        test.setBlock(5, 2, 4, Blocks.STONE);
+        physics.staffInput(player, TowStaffInput.TOGGLE);
+        test.assertTrue(craft.staffHolder() < 0, "The staff grabbed through terrain");
+        test.setBlock(5, 2, 4, Blocks.AIR);
+        physics.staffInput(player, TowStaffInput.TOGGLE);
+        test.assertTrue(craft.staffHolder() == player.getId(), "The staff did not grab an aimed-at craft in creative");
         player.setXRot(-35);
         test.startSequence().thenIdle(32).thenExecute(() -> {
             test.assertTrue(craft.getY() - startY > 0.6, "The craft did not follow the staff upwards");
             test.assertTrue(craft.getBoundingBox().maxY < test.absolutePos(new BlockPos(5, 4, 5)).getY() + 0.12,
                     "The staff dragged the craft through the ceiling");
-            player.releaseUsingItem();
+            physics.staffInput(player, TowStaffInput.TOGGLE);
+            test.assertTrue(craft.staffHolder() < 0, "The second use did not release the hull");
         }).thenWaitUntil(() -> test.assertTrue(craft.getY() - startY < 0.25, "The released craft did not fall"))
                 .thenExecute(craft::discard).thenSucceed();
     }
@@ -498,17 +504,17 @@ public final class AerolithGameTests {
         player.setYRot(0);
         player.setXRot(0);
         player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Aerolith.TOW_STAFF.get()));
-        craft.interact(player, InteractionHand.MAIN_HAND);
-        test.assertTrue(player.isUsingItem(), "The staff did not start holding the craft");
+        WorldPhysics physics = WorldPhysics.of(level);
+        physics.staffInput(player, TowStaffInput.TOGGLE);
+        test.assertTrue(craft.staffHolder() == player.getId(), "The staff did not start holding the craft");
         player.setXRot(-30);
         Vec3[] pinned = {null};
         CraftEntity[] landing = {null};
-        WorldPhysics physics = WorldPhysics.of(level);
         test.startSequence().thenIdle(8).thenExecute(() -> {
             test.assertTrue(craft.speed() > 0.5, "The test craft must be moving when pinned");
             player.setYRot(90); // No longer aiming at it: the press still applies to the held craft.
-            physics.toggleAnchor(player);
-            test.assertTrue(craft.anchored() && !player.isUsingItem() && craft.speed() == 0 && craft.spin() == 0,
+            physics.staffInput(player, TowStaffInput.PIN);
+            test.assertTrue(craft.anchored() && craft.staffHolder() < 0 && craft.speed() == 0 && craft.spin() == 0,
                     "Pinning must stop both the grip and all motion");
             test.assertTrue(!physics.impulseAt(craft, new Vec3(0, 2000, 0), craft.position()), "A pinned craft accepted an impulse");
             pinned[0] = craft.position();
@@ -526,9 +532,41 @@ public final class AerolithGameTests {
             player.setPos(craft.position().add(0, -player.getEyeHeight(), -3));
             player.setYRot(0);
             player.setXRot(0);
-            physics.toggleAnchor(player);
+            physics.staffInput(player, TowStaffInput.PIN);
             test.assertTrue(!craft.anchored() && craft.speed() == 0, "Unpinning restored old momentum or did not work");
         }).thenWaitUntil(() -> test.assertTrue(craft.getY() < pinned[0].y - 0.5, "The unpinned craft did not fall"))
+                .thenExecute(craft::discard).thenSucceed();
+    }
+
+    public static void towStaffAdjustsDistanceAndRotates(GameTestHelper test) {
+        floor(test);
+        var level = test.getLevel();
+        var player = editor(level);
+        player.setGameMode(GameType.CREATIVE);
+        player.setItemInHand(InteractionHand.OFF_HAND, new ItemStack(Aerolith.TOW_STAFF.get()));
+        Vec3 start = test.absoluteVec(new Vec3(5.5, 8.5, 5.5));
+        CraftEntity craft = StructureTransfer.create(level, List.of(new CraftBlock(BlockPos.ZERO, Blocks.OAK_PLANKS.defaultBlockState())),
+                start, player.getUUID());
+        test.assertTrue(craft != null, "Cannot create the craft to rotate");
+        player.setPos(start.add(0, -player.getEyeHeight(), -130));
+        player.setYRot(0);
+        player.setXRot(0);
+        WorldPhysics physics = WorldPhysics.of(level);
+        physics.staffInput(player, TowStaffInput.TOGGLE);
+        test.assertTrue(craft.staffHolder() < 0, "The staff grabbed beyond its range");
+        // Same spot as the other staff tests: the test template has blocks closer to the craft than that.
+        player.setPos(craft.position().add(0, -player.getEyeHeight(), -3));
+        physics.staffInput(player, TowStaffInput.PIN);
+        test.assertTrue(craft.anchored(), "Could not pin the distant craft");
+        physics.staffInput(player, TowStaffInput.TOGGLE);
+        test.assertTrue(craft.staffHolder() == player.getId() && !craft.anchored(), "The off-hand staff did not unpin and grab");
+        physics.staffInput(player, TowStaffInput.adjust(Float.NaN, 0, 0));
+        physics.staffInput(player, TowStaffInput.adjust(3, 0.6f, 0));
+        test.startSequence().thenWaitUntil(() -> {
+            test.assertTrue(craft.getZ() - start.z > 2, "Increasing the staff distance did not move the craft away");
+            test.assertTrue(craft.orientation(1).y > 0.20, "Rotating the staff did not turn the craft");
+        }).thenExecute(() -> player.setItemInHand(InteractionHand.OFF_HAND, ItemStack.EMPTY))
+                .thenWaitUntil(() -> test.assertTrue(craft.staffHolder() < 0, "Putting away the staff did not release the craft"))
                 .thenExecute(craft::discard).thenSucceed();
     }
 

@@ -26,6 +26,7 @@ final class NativePhysics {
     // How far the flaps are down, 0 to 1.
     static native void setFlaps(long world, long body, double flaps);
     static native void impulse(long world, long body, double ix, double iy, double iz);
+    static native void staffPull(long world, long body, double ix, double iy, double iz, double qx, double qy, double qz, double qw);
     // World-space impulse applied at a world-space point: it adds torque by the lever arm to the COM change.
     static native void impulseAt(long world, long body, double ix, double iy, double iz, double px, double py, double pz);
     // The same spread over the coming tick, for what stands on the body; a still load leaves a body at rest alone.

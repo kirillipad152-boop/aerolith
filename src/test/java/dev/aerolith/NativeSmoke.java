@@ -32,6 +32,11 @@ final class NativeSmoke {
             if (later.length != NativePhysics.RECORD || !(later[9] < state[9]) || Math.abs(later[8] - state[8]) > 1e-8) {
                 throw new AssertionError("An inactive body lost momentum");
             }
+            NativePhysics.staffPull(world, body, 0, 0, 0, 0, 0.7071067811865476, 0, 0.7071067811865476);
+            double[] turning = NativePhysics.step(world, 0, 0, 0);
+            if (turning.length != NativePhysics.RECORD || !(turning[5] > 0 && turning[12] > 0)) {
+                throw new AssertionError("The staff did not turn the body through the solver");
+            }
             NativePhysics.removeBody(world, body);
             try {
                 NativePhysics.setThrottle(world, body, 0);

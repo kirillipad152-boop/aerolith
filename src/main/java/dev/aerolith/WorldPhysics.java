@@ -9,17 +9,16 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.border.WorldBorder;
 import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
+import org.joml.Quaternionf;
 
 public final class WorldPhysics {
     static final int MAX_BODIES = 16_384;
@@ -55,7 +54,21 @@ public final class WorldPhysics {
         }
     }
 
-    private record Grab(ServerPlayer player, ItemStack staff, Vec3 localPoint, double distance) {}
+    private static final class Grab {
+        final ServerPlayer player;
+        final ItemStack staff;
+        final Vec3 localPoint;
+        final Quaternionf rotation;
+        double distance;
+
+        Grab(ServerPlayer player, ItemStack staff, CraftEditing.Target target, Quaternionf rotation) {
+            this.player = player;
+            this.staff = staff;
+            this.localPoint = target.localHit();
+            this.rotation = rotation;
+            this.distance = Math.max(TowStaffItem.MIN_DISTANCE, target.pick().distance());
+        }
+    }
 
     private WorldPhysics(ServerLevel level) {
         this.level = level;
@@ -183,87 +196,109 @@ public final class WorldPhysics {
         return true;
     }
 
-    /** The server picks the grip point; no position or force is taken from the client packet. */
-    boolean grab(CraftEntity craft, ServerPlayer player, InteractionHand hand) {
-        if (hand != InteractionHand.MAIN_HAND || player.level() != level || !player.isCreative()
-                || !player.getMainHandItem().is(Aerolith.TOW_STAFF.get()) || !craft.canEdit(player) || player.isUsingItem()
-                || player.isPassenger() || craft.isVehicle() || !isSimulated(craft) || craft.loads.supports(player)) return false;
-        Body body = crafts.get(craft);
-        if (body.grab != null || crafts.values().stream().anyMatch(b -> b.grab != null && b.grab.player() == player)) return false;
-        Vec3 eye = player.getEyePosition();
-        double reach = player.blockInteractionRange();
-        var target = CraftEditing.target(craft, eye, player.getViewVector(1), reach, 1);
-        if (target == null || !staffLineClear(player, target)) return false;
-        player.startUsingItem(hand);
-        if (!player.isUsingItem()) return false;
-        body.grab = new Grab(player, player.getUseItem(), target.localHit(), Math.max(1.5, target.pick().distance()));
-        return true;
-    }
-
-    void toggleAnchor(ServerPlayer player) {
-        if (!player.getMainHandItem().is(Aerolith.TOW_STAFF.get())) return;
+    void staffInput(ServerPlayer player, TowStaffInput input) {
+        ItemStack staff = TowStaffItem.held(player);
+        if (!input.valid() || staff.isEmpty() || !player.isAlive() || player.level() != level || player.isPassenger()) return;
         if (!player.isCreative()) {
-            AssemblerItem.message(player, "staff_creative");
+            if (input.action() != TowStaffInput.ADJUST) AssemblerItem.message(player, "staff_creative");
             return;
         }
-        CraftEntity craft = null;
-        if (player.isUsingItem() && player.getUseItem() == player.getMainHandItem()) {
-            for (var entry : crafts.entrySet()) {
-                Grab grab = entry.getValue().grab;
-                if (grab != null && grab.player() == player && grab.staff() == player.getUseItem()) {
-                    craft = entry.getKey();
-                    break;
-                }
+
+        Body held = null;
+        for (Body body : crafts.values()) {
+            if (body.grab != null && body.grab.player == player) {
+                if (body.grab.staff == staff && gripInRange(body)) held = body;
+                else release(body);
+                break;
             }
         }
-        if (craft == null) {
-            var aimed = CraftEditing.nearest(level, player.getEyePosition(), player.getViewVector(1), player.blockInteractionRange(), 1);
-            if (aimed == null || !staffLineClear(player, aimed.target())) return;
-            craft = aimed.craft();
+        if (input.action() == TowStaffInput.ADJUST) {
+            if (held != null) adjustGrip(held.grab, input);
+            return;
         }
+        if (held != null && input.action() == TowStaffInput.TOGGLE.action()) {
+            release(held);
+            AssemblerItem.message(player, "staff_released");
+            return;
+        }
+
+        // The server picks the first reachable hull and its grip point, not a target sent by the client.
+        var aimed = held == null ? TowStaffItem.aimed(player, 1f) : null;
+        if (held == null && aimed == null) return;
+        CraftEntity craft = held == null ? aimed.craft() : held.craft;
         if (craft.isRemoved() || craft.hull() == null) return;
         if (!craft.canEdit(player)) {
             AssemblerItem.message(player, "owner");
             return;
         }
-        craft.setAnchored(!craft.anchored());
-        // Re-register with zero momentum before making it fixed; a normal unloaded body instead keeps its old motion.
-        if (craft.anchored()) rebuild(craft);
-        AssemblerItem.message(player, craft.anchored() ? "staff_anchored" : "staff_unanchored");
+        Body body = crafts.get(craft);
+        if (input.action() == TowStaffInput.PIN.action()) {
+            if (body != null) release(body);
+            craft.setAnchored(!craft.anchored());
+            // Re-register with zero momentum before making it fixed; a normal unloaded body keeps its motion.
+            if (craft.anchored()) rebuild(craft);
+            AssemblerItem.message(player, craft.anchored() ? "staff_anchored" : "staff_unanchored");
+            return;
+        }
+        if (failed || body == null || body.grab != null || body.id == 0
+                || (!body.active && !craft.anchored()) || !level.isPositionEntityTicking(craft.blockPosition())
+                || craft.isVehicle() || craft.loads.supports(player)) {
+            AssemblerItem.message(player, "staff_unavailable");
+            return;
+        }
+        craft.setAnchored(false);
+        body.grab = new Grab(player, staff, aimed.target(), craft.orientation(1f));
+        craft.setStaffGrip(player.getId(), body.grab.localPoint);
+        AssemblerItem.message(player, "staff_hold");
     }
 
-    private static boolean staffLineClear(ServerPlayer player, CraftEditing.Target target) {
-        HitResult terrain = player.pick(player.blockInteractionRange(), 1, false);
-        return terrain.getType() != HitResult.Type.BLOCK || terrain.getLocation().distanceTo(player.getEyePosition()) >= target.pick().distance();
+    private static void adjustGrip(Grab grab, TowStaffInput input) {
+        grab.distance = Mth.clamp(grab.distance + input.distance(), TowStaffItem.MIN_DISTANCE, TowStaffItem.RANGE);
+        float yaw = Mth.clamp(input.yaw(), -0.75f, 0.75f);
+        float pitch = Mth.clamp(input.pitch(), -0.75f, 0.75f);
+        if (yaw == 0 && pitch == 0) return;
+        Vec3 right = Vec3.directionFromRotation(0f, grab.player.getYRot() + 90);
+        Vec3 up = right.cross(grab.player.getViewVector(1)).normalize();
+        grab.rotation.premul(new Quaternionf().rotateAxis(yaw, (float) up.x, (float) up.y, (float) up.z)
+                .rotateAxis(pitch, (float) right.x, (float) right.y, (float) right.z)).normalize();
+    }
+
+    private static Vec3 gripPoint(Body body) {
+        return body.craft.position().add(Hull.rotate(body.craft.orientation(1f), body.grab.localPoint));
+    }
+
+    private static boolean gripInRange(Body body) {
+        double range = TowStaffItem.RANGE + 8;
+        return body.grab.player.getEyePosition().distanceToSqr(gripPoint(body)) <= range * range;
     }
 
     private static void release(Body body) {
-        Grab grab = body.grab;
+        if (body.grab == null) return;
         body.grab = null;
-        if (grab != null && grab.player().getUseItem() == grab.staff()) grab.player().stopUsingItem();
+        body.craft.setStaffGrip(-1, Vec3.ZERO);
     }
 
     private void pull(CraftEntity craft, Body body, boolean simulated) {
         Grab grab = body.grab;
-        if (grab == null) return;
-        ServerPlayer player = grab.player();
+        ServerPlayer player = grab.player;
         if (!simulated || player.isRemoved() || !player.isAlive() || player.level() != level || !player.isCreative()
-                || !player.isUsingItem() || player.getUseItem() != grab.staff() || player.getMainHandItem() != grab.staff()
+                || TowStaffItem.held(player) != grab.staff
                 || !craft.canEdit(player) || player.isPassenger() || craft.isVehicle() || craft.loads.supports(player)) {
             release(body);
             return;
         }
-        Vec3 point = craft.position().add(Hull.rotate(craft.orientation(1), grab.localPoint()));
+        Vec3 point = gripPoint(body);
         Vec3 eye = player.getEyePosition();
-        if (eye.distanceToSqr(point) > (grab.distance() + 8) * (grab.distance() + 8)) {
+        double range = TowStaffItem.RANGE + 8;
+        if (eye.distanceToSqr(point) > range * range) {
             release(body);
             return;
         }
-        Vec3 velocity = eye.add(player.getViewVector(1).scale(grab.distance())).subtract(point).scale(4);
+        Vec3 velocity = eye.add(player.getViewVector(1).scale(grab.distance)).subtract(point).scale(4);
         if (velocity.lengthSqr() > 36) velocity = velocity.normalize().scale(6);
-        // Pull at the centre of mass so the staff cannot kick a long hull into a spin. Rapier still resolves contacts.
         Vec3 impulse = velocity.subtract(craft.comVelocity()).scale(0.5).add(0, 9.81 * 0.05, 0).scale(craft.hull().mass);
-        NativePhysics.impulse(world, body.id, impulse.x, impulse.y, impulse.z);
+        Quaternionf rotation = grab.rotation;
+        NativePhysics.staffPull(world, body.id, impulse.x, impulse.y, impulse.z, rotation.x, rotation.y, rotation.z, rotation.w);
     }
 
     private void remove(Body body) {

@@ -27,8 +27,6 @@ import org.joml.Quaternionf;
  */
 public record CraftClick(boolean attack, boolean offHand, boolean pick, int craft, BlockPos offset, Direction face, Vec3 localHit)
         implements CustomPacketPayload {
-    // A staff press has no client-selected target: the server uses its current grip or its own ray.
-    static final CraftClick STAFF_ANCHOR = new CraftClick(true, false, false, -1, BlockPos.ZERO, Direction.UP, Vec3.ZERO);
     private static final Type<CraftClick> TYPE = new Type<>(Identifier.fromNamespaceAndPath(Aerolith.ID, "craft_click"));
     private static final StreamCodec<ByteBuf, CraftClick> CODEC = StreamCodec.ofMember(CraftClick::write, CraftClick::read);
     private static final Map<ServerPlayer, Long> LAST = new WeakHashMap<>();
@@ -61,10 +59,7 @@ public record CraftClick(boolean attack, boolean offHand, boolean pick, int craf
         long now = player.level().getGameTime();
         Long previous = LAST.put(player, now);
         if (previous != null && previous == now) return;
-        if (click.craft == STAFF_ANCHOR.craft) {
-            if (click.attack && !click.offHand && !click.pick) WorldPhysics.of(player.level()).toggleAnchor(player);
-            return;
-        }
+        if (!click.pick && !TowStaffItem.held(player).isEmpty()) return;
         if (!Double.isFinite(click.localHit.x + click.localHit.y + click.localHit.z)) return;
 
         var eye = player.getEyePosition();

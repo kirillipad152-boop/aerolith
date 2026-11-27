@@ -55,11 +55,19 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaternionf;
 import org.joml.Quaternionfc;
+import org.joml.Vector3f;
+import org.joml.Vector3fc;
 
 public final class CraftEntity extends Entity {
     private static final MapCodec<CompoundTag> SAVED_FIELDS = MapCodec.assumeMapUnsafe(CompoundTag.CODEC);
     private static final EntityDataAccessor<Quaternionfc> ROTATION =
             SynchedEntityData.defineId(CraftEntity.class, EntityDataSerializers.QUATERNION);
+    private static final EntityDataAccessor<Boolean> ANCHORED =
+            SynchedEntityData.defineId(CraftEntity.class, EntityDataSerializers.BOOLEAN);
+    private static final EntityDataAccessor<Integer> STAFF_HOLDER =
+            SynchedEntityData.defineId(CraftEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Vector3fc> STAFF_POINT =
+            SynchedEntityData.defineId(CraftEntity.class, EntityDataSerializers.VECTOR3);
     /** Set by the client to drop the copy of a craft's plot chunks when the craft goes away. */
     static volatile Consumer<CraftEntity> clientRelease = craft -> {};
     /** The client's view of a craft's plot blocks, for fluid flow; the server uses the plot level itself. */
@@ -72,7 +80,6 @@ public final class CraftEntity extends Entity {
     private Hull hull;
     private CraftSections sections;
     private UUID owner;
-    private boolean anchored;
 
     // The blocks live in the plot dimension. This is a copy of what is there, offset -> state, kept current from block
     // changes on the server and from packets on the client; the hull is derived from it.
@@ -535,6 +542,9 @@ public final class CraftEntity extends Entity {
     @Override
     protected void defineSynchedData(SynchedEntityData.Builder builder) {
         builder.define(ROTATION, new Quaternionf());
+        builder.define(ANCHORED, false);
+        builder.define(STAFF_HOLDER, -1);
+        builder.define(STAFF_POINT, new Vector3f());
     }
 
     @Override
@@ -633,13 +643,7 @@ public final class CraftEntity extends Entity {
             AssemblerItem.message(pilot, "owner");
             return InteractionResult.CONSUME;
         }
-        if (held.is(Aerolith.TOW_STAFF.get())) {
-            if (!pilot.isCreative()) AssemblerItem.message(pilot, "staff_creative");
-            else if (anchored) AssemblerItem.message(pilot, "staff_anchored");
-            else if (WorldPhysics.of(pilot.level()).grab(this, pilot, hand)) AssemblerItem.message(pilot, "staff_hold");
-            else AssemblerItem.message(pilot, "staff_unavailable");
-            return InteractionResult.CONSUME;
-        }
+        if (!TowStaffItem.held(player).isEmpty()) return InteractionResult.CONSUME;
         if (tool && player.isSecondaryUseActive()) {
             StructureTransfer.dock((ServerLevel) level(), pilot, this);
             return InteractionResult.CONSUME;
@@ -677,20 +681,34 @@ public final class CraftEntity extends Entity {
     private final List<Vec3[]> pushes = new ArrayList<>();
 
     boolean anchored() {
-        return anchored;
+        return entityData.get(ANCHORED);
     }
 
     void setAnchored(boolean anchored) {
-        this.anchored = anchored;
+        entityData.set(ANCHORED, anchored);
         if (anchored) {
             Arrays.fill(motion, 7, motion.length, 0);
             pushes.clear();
         }
     }
 
+    int staffHolder() {
+        return entityData.get(STAFF_HOLDER);
+    }
+
+    Vec3 staffPoint() {
+        var point = entityData.get(STAFF_POINT);
+        return new Vec3(point.x(), point.y(), point.z());
+    }
+
+    void setStaffGrip(int holder, Vec3 point) {
+        entityData.set(STAFF_POINT, new Vector3f((float) point.x, (float) point.y, (float) point.z));
+        entityData.set(STAFF_HOLDER, holder);
+    }
+
     /** Something leans on this craft from the side: an impulse at a world point, applied before the next step. */
     void queuePush(Vec3 point, Vec3 impulse) {
-        if (!anchored && pushes.size() < 64) pushes.add(new Vec3[] {point, impulse});
+        if (!anchored() && pushes.size() < 64) pushes.add(new Vec3[] {point, impulse});
     }
 
     int pendingPushes() {
@@ -730,7 +748,7 @@ public final class CraftEntity extends Entity {
         motion[8] = velocity.y;
         motion[9] = velocity.z;
         System.arraycopy(parent.motion, 10, motion, 10, 3);
-        setAnchored(parent.anchored);
+        setAnchored(parent.anchored());
     }
 
     Vec3 worldCenterOfMass() {
@@ -762,7 +780,7 @@ public final class CraftEntity extends Entity {
         ListTag state = new ListTag();
         for (int i = 3; i < motion.length; i++) state.add(net.minecraft.nbt.DoubleTag.valueOf(motion[i]));
         tag.put("MotionSI", state);
-        if (anchored) tag.putBoolean("Anchored", true);
+        if (anchored()) tag.putBoolean("Anchored", true);
         if (owner != null) {
             tag.store("Owner", UUIDUtil.CODEC, owner);
         }

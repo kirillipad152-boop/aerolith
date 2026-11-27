@@ -61,9 +61,16 @@ Walking on a deck is computed by the client. The server rejects a step only if i
 
 ### Tow Staff (creative)
 
-Take the **Tow Staff** from the *Tools & Utilities* tab or with `/give @s aerolith:tow_staff`. Aim at one of your crafts from outside, **hold use** with the staff in your main hand, and move the craft with your gaze. **Release use** or put the staff away to let it go. The staff does not work in survival or while you stand on that craft. It pulls the hull through the solver rather than teleporting it: obstacles stay solid, and a released craft keeps its velocity.
+Take the **Tow Staff** from *Tools & Utilities* or with `/give @s aerolith:tow_staff`. Hold it in either hand and aim at one of your crafts from outside, up to **128 blocks** away.
 
-**Left click** on a craft, or while holding one, pins the hull in its current pose: velocity and spin are zeroed and collisions stay. A pin survives a world restart. **Left click** again unpins it, after which normal physics applies with no stored velocity.
+| Default input | Action |
+|---|---|
+| Right click | Grab the craft, then move it with your gaze. Click again to release. Grabbing a pinned craft also unpins it. |
+| Left click | Pin the held or aimed-at craft, or unpin it. Pins survive world restarts. |
+| Mouse wheel | Change the distance to the held craft; hold Sprint for larger steps. |
+| Hold Tab and move the mouse | Rotate the held craft instead of turning the camera. Rebind in Controls. |
+
+Putting the staff away releases the craft. The staff uses Rapier forces instead of teleporting, so obstacles stay solid and a released craft keeps its momentum. The controls and item texture are based on [Physics Staff for 26.3](https://github.com/kirillipad152-boop/physics-staff-26.3); the texture is MIT-licensed (see `META-INF/AEROLITH-PHYSICS-STAFF-LICENSE.txt`). This does not require Sable.
 
 Other commands (operator): `/aerolith wind <x> <y> <z>` sets the wind speed in m/s in the current dimension until you leave the world or restart the server; `/aerolith inspect <selector>` shows mass, linear and angular velocity; `/aerolith spawn`, `/aerolith perf` and `/aerolith bench` are described under *Performance*.
 

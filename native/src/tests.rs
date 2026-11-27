@@ -71,6 +71,27 @@ fn freefall_uses_si_and_advances_exactly_one_tick_per_call() {
 }
 
 #[test]
+fn staff_turns_a_body_with_torque_and_leaves_its_pose_to_the_solver() {
+    let mut w = World::default();
+    w.add_uniform(1, &state(0., 100., 0.), &CUBE, &[]).unwrap();
+    let handle = w.crafts[&1].handle;
+    assert!(
+        w.staff_pull(1, ZERO, Quaternion::new(f64::NAN, 0., 0., 0.))
+            .is_err()
+    );
+    let target = UnitQuaternion::from_axis_angle(&Vec3::y_axis(), std::f64::consts::FRAC_PI_2);
+    w.staff_pull(1, ZERO, -target.into_inner()).unwrap();
+    assert_eq!(*w.bodies[handle].rotation(), UnitQuaternion::identity());
+    assert!(w.bodies[handle].angvel().y > 0.0);
+    for _ in 0..80 {
+        w.staff_pull(1, ZERO, target.into_inner()).unwrap();
+        w.advance(ZERO).unwrap();
+    }
+    assert!(w.bodies[handle].rotation().angle_to(&target) < 0.01);
+    near(w.bodies[handle].linvel().y, -80.0 * TICK * GRAVITY, 1.0e-9);
+}
+
+#[test]
 fn a_wall_is_not_ground_and_a_new_load_or_missing_floor_requires_fine_steps() {
     let (mut w, _) = resting_world(&[]);
     for _ in 0..8 {

@@ -64,7 +64,8 @@ final class CraftRenderer extends EntityRenderer<CraftEntity, CraftRenderer.Stat
             }
         }
         if (client.debugEntries.isCurrentlyEnabled(DebugScreenEntries.ENTITY_HITBOXES)) debug(craft, render.outlines);
-        if (client.player != null && !client.gui.hud.isHidden() && craft.getBoundingBox().inflate(client.player.blockInteractionRange())
+        if (client.player != null && !TowStaffClient.holdsStaff(client.player) && !client.gui.hud.isHidden()
+                && craft.getBoundingBox().inflate(client.player.blockInteractionRange())
                 .contains(client.player.getEyePosition(partialTick))) {
             var aimed = CraftClient.aimed(partialTick);
             if (aimed != null && aimed.craft() == craft) render.outlines.add(new Outline(aimed.target().pick().box().inflate(0.002), 0x99000000));
