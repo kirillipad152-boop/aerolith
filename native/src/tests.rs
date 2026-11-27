@@ -1515,26 +1515,28 @@ fn ground_still_carries_a_hull_that_leans_on_a_wall() {
 }
 
 #[test]
-fn a_cube_slides_over_the_seams_of_a_deck_of_many_boxes() {
-    let deck: Vec<f64> = (-12..12)
-        .flat_map(|x| [f64::from(x) + 0.5, 0., 0., 0.5, 0.5, 2., 480., 0.2, 0.])
-        .collect();
-    for yaw in [0., 0.3, 0.7] {
-        let mut w = World::default();
-        w.add_uniform(1, &state(0., 2., 0.), &deck, &[]).unwrap();
-        w.set_active(1, false).unwrap();
-        let mut s = state(-11., 3., 0.);
-        s[4] = (yaw / 2_f64).sin();
-        s[6] = (yaw / 2_f64).cos();
-        s[7] = 10.;
-        w.add_uniform(2, &s, &CUBE, &[]).unwrap();
-        for tick in 1..=30 {
-            let out = run(&mut w, 2, 1);
-            near(out[1], 3., 0.01);
-            near(out[7], 10. - 0.2 * GRAVITY * 0.05 * f64::from(tick), 0.1);
+fn a_cube_slides_over_deck_seams_with_or_without_an_index() {
+    for half in [3, 12] {
+        let deck: Vec<f64> = (-half..half)
+            .flat_map(|x| [f64::from(x) + 0.5, 0., 0., 0.5, 0.5, 2., 480., 0.2, 0.])
+            .collect();
+        for yaw in [0., 0.3, 0.7] {
+            let mut w = World::default();
+            w.add_uniform(1, &state(0., 2., 0.), &deck, &[]).unwrap();
+            w.set_active(1, false).unwrap();
+            let mut s = state(1. - f64::from(half), 3., 0.);
+            s[4] = (yaw / 2_f64).sin();
+            s[6] = (yaw / 2_f64).cos();
+            s[7] = 10.;
+            w.add_uniform(2, &s, &CUBE, &[]).unwrap();
+            for tick in 1..=30.min(4 * half - 4) {
+                let out = run(&mut w, 2, 1);
+                near(out[1], 3., 0.01);
+                near(out[7], 10. - 0.2 * GRAVITY * 0.05 * f64::from(tick), 0.1);
+            }
+            w.remove_body(1).unwrap();
+            assert!(w.contacts.hulls.is_empty());
         }
-        w.remove_body(1).unwrap();
-        assert!(w.contacts.hulls.is_empty());
     }
 }
 
@@ -1742,6 +1744,47 @@ fn layers_of_heavy_crafts_dropped_on_a_light_one_settle() {
             }
         }
         must_settle(name, &mut w, 200, 120, 0.06);
+    }
+}
+
+#[test]
+fn side_push_moves_all_144_rafts() {
+    let mut w = World::default();
+    w.set_terrain(1, &[140., -0.5, 0., 180., 0.5, 48., 0.06, 0.])
+        .unwrap();
+    let bar = [0., 0., 0., 0.5, 0.5, 6.7, 9000., 0.06, 0.];
+    let cube = [0., 0., 0., 0.5, 0.5, 0.5, OAK, 0.06, 0.];
+    w.add_uniform(1, &state(0., 0.5, 0.), &bar, &[]).unwrap();
+    let x_at = |i| 1.14 + f64::from(i) * 1.04;
+    for x in 0..12 {
+        for z in 0..12 {
+            let id = i64::from(x * 12 + z + 2);
+            w.add_uniform(
+                id,
+                &state(x_at(x), 0.5, (f64::from(z) - 5.5) * 1.12),
+                &cube,
+                &[],
+            )
+            .unwrap();
+        }
+    }
+    for _ in 0..25 {
+        w.advance(ZERO).unwrap();
+    }
+    let bar = w.crafts[&1].handle;
+    for _ in 0..30 {
+        let body = &w.bodies[bar];
+        let impulse = (12. - body.linvel().x) * body.mass();
+        w.impulse(1, Vec3::x() * impulse).unwrap();
+        w.advance(ZERO).unwrap();
+    }
+    for i in 0..144 {
+        let body = &w.bodies[w.crafts[&i64::from(i + 2)].handle];
+        assert!(
+            body.translation().x > x_at(i / 12) + 2.0,
+            "raft {i} was not pushed: {:?}",
+            body.translation()
+        );
     }
 }
 

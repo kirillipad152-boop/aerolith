@@ -55,16 +55,18 @@ final class CraftEditing {
     }
 
     static Located nearest(Level level, Vec3 eye, Vec3 view, double reach, float partialTick, boolean fluids) {
+        CraftSections sections = HullCollisions.sectionsIfPresent(level);
+        if (sections == null) return null;
         AABB area = new AABB(eye, eye.add(view.scale(reach))).inflate(1);
-        Located best = null;
-        for (CraftEntity craft : HullCollisions.crafts(level)) {
-            if (craft.isRemoved() || !craft.getBoundingBox().intersects(area)) continue;
+        Located[] best = {null};
+        sections.forEachNear(area, craft -> {
+            if (craft.isRemoved() || !craft.getBoundingBox().intersects(area)) return;
             Target target = target(craft, eye, view, reach, partialTick, fluids);
-            if (target != null && (best == null || target.pick().distance() < best.target().pick().distance())) {
-                best = new Located(craft, target);
+            if (target != null && (best[0] == null || target.pick().distance() < best[0].target().pick().distance())) {
+                best[0] = new Located(craft, target);
             }
-        }
-        return best;
+        });
+        return best[0];
     }
 
     /** True while the player holds an empty bucket, which scoops fluid and therefore aims at it. */
@@ -418,10 +420,12 @@ final class CraftEditing {
                 if (!keep.contains(fluid.offset())) Plots.erase(plot, craft.plotPos(fluid.offset()));
             }
             craft.clearDirty();
+            blocks = craft.cellBlocks(false);
         }
-        craft.edit(craft.cellBlocks(false), craft.cellBlocks(true));
+        List<CraftBlock> fluids = craft.cellBlocks(true);
+        craft.edit(blocks, fluids);
         // Fluid left outside the box the blocks now span, because a wall was broken or a part left, would hang in the air.
-        for (CraftBlock fluid : craft.cellBlocks(true)) {
+        for (CraftBlock fluid : fluids) {
             if (!craft.holdsFluid(craft.plotPos(fluid.offset()))) Plots.erase(plot, craft.plotPos(fluid.offset()));
         }
     }

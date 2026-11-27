@@ -5,7 +5,6 @@ use std::ops::{AddAssign, Sub, SubAssign};
 
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C)]
-//#[repr(align(64))]
 pub struct SolverVel<N: Scalar + Copy> {
     // The linear velocity of a solver body.
     pub linear: Vector<N>,

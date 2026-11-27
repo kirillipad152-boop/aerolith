@@ -1,5 +1,7 @@
 // #[cfg(not(feature = "parallel"))]
 pub(crate) use self::island_solver::IslandSolver;
+#[cfg(feature = "parallel")]
+pub(crate) use self::parallel_colored::{IntraIslandGuard, INTRA_ISLAND_MIN_MANIFOLDS};
 // #[cfg(feature = "parallel")]
 // pub(crate) use self::parallel_island_solver::{ParallelIslandSolver, ThreadContext};
 // #[cfg(feature = "parallel")]
@@ -22,6 +24,7 @@ use solver_vel::SolverVel;
 mod categorization;
 mod contact_constraint;
 mod interaction_groups;
+pub(crate) mod parallel_colored;
 // #[cfg(not(feature = "parallel"))]
 mod island_solver;
 mod joint_constraint;

@@ -15,30 +15,37 @@ public final class CraftWater {
 
     /** The fluid of every craft overlapping {@code entity}. */
     public static List<Contact> touching(Entity entity) {
-        var crafts = HullCollisions.crafts(entity.level());
-        if (crafts.isEmpty()) return List.of();
+        CraftSections sections = HullCollisions.sectionsIfPresent(entity.level());
+        if (sections == null) return List.of();
         var box = entity.getBoundingBox();
-        List<Contact> out = null;
-        for (CraftEntity craft : crafts) {
-            if (craft.isRemoved() || craft == entity || !craft.getBoundingBox().intersects(box)) continue;
+        @SuppressWarnings("unchecked")
+        List<Contact>[] out = new List[] {null};
+        sections.forEachNear(box, craft -> {
+            if (craft.isRemoved() || craft == entity || !craft.getBoundingBox().intersects(box)) return;
             for (CraftEntity.Touch touch : craft.touching(entity)) {
-                if (out == null) out = new java.util.ArrayList<>();
-                out.add(new Contact(touch.fluid(), touch.height(), touch.push()));
+                if (out[0] == null) out[0] = new java.util.ArrayList<>();
+                out[0].add(new Contact(touch.fluid(), touch.height(), touch.push()));
             }
-        }
-        return out == null ? List.of() : out;
+        });
+        return out[0] == null ? List.of() : out[0];
     }
 
     /** The fluid the entity's eyes are in, in some craft, or null. */
     public static Holder<Fluid> atEyes(Entity entity) {
-        var crafts = HullCollisions.crafts(entity.level());
-        if (crafts.isEmpty()) return null;
+        CraftSections sections = HullCollisions.sectionsIfPresent(entity.level());
+        if (sections == null) return null;
         Vec3 eyes = new Vec3(entity.getX(), entity.getEyeY(), entity.getZ());
-        for (CraftEntity craft : crafts) {
-            if (craft.isRemoved() || craft == entity || !craft.getBoundingBox().inflate(0.1).contains(eyes)) continue;
+        var probe = new net.minecraft.world.phys.AABB(eyes, eyes).inflate(0.1);
+        Holder<Fluid>[] found = new Holder[1];
+        sections.anyNear(probe, craft -> {
+            if (craft.isRemoved() || craft == entity || !craft.getBoundingBox().inflate(0.1).contains(eyes)) return false;
             Holder<Fluid> type = craft.fluidAt(eyes);
-            if (type != null) return type;
-        }
-        return null;
+            if (type != null) {
+                found[0] = type;
+                return true;
+            }
+            return false;
+        });
+        return found[0];
     }
 }

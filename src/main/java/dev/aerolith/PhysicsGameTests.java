@@ -176,6 +176,29 @@ public final class PhysicsGameTests {
         }).thenSucceed();
     }
 
+    public static void terrainClaimVisitsOnlyChangedTiles(GameTestHelper test) {
+        Terrain.Range[] ranges = {null, new Terrain.Range(-2, -3, -4, 2, 2, 1),
+                new Terrain.Range(-2, -3, -4, 2, 3, 1), new Terrain.Range(-1, -2, -3, 3, 3, 2),
+                new Terrain.Range(2, 2, 1, 2, 2, 1), new Terrain.Range(4, 4, 4, 7, 7, 7)};
+        for (Terrain.Range range : ranges) {
+            if (range == null) continue;
+            for (Terrain.Range other : ranges) {
+                var expected = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+                for (int x = range.x1(); x <= range.x2(); x++) {
+                    for (int y = range.y1(); y <= range.y2(); y++) {
+                        for (int z = range.z1(); z <= range.z2(); z++) {
+                            if (other == null || x < other.x1() || x > other.x2() || y < other.y1() || y > other.y2()
+                                    || z < other.z1() || z > other.z2()) expected.add(BlockPos.asLong(x, y, z));
+                        }
+                    }
+                }
+                range.forEachOutside(other, key -> test.assertTrue(expected.remove(key), "Duplicate or shared terrain tile visited"));
+                test.assertTrue(expected.isEmpty(), "Some tiles outside the shared range were missed");
+            }
+        }
+        test.succeed();
+    }
+
     public static void boxIndexFindsExactlyWhatAScanFinds(GameTestHelper test) {
         Random random = new Random(7);
         var boxes = new java.util.ArrayList<AABB>();

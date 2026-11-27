@@ -13,7 +13,7 @@ use rapier3d_f64::na::{Quaternion, Translation3, UnitQuaternion};
 use rapier3d_f64::prelude::*;
 use rapier3d_f64::rayon::{ThreadPool, ThreadPoolBuilder};
 
-use contacts::{Contacts, FrictionGrid};
+use contacts::{Contacts, FrictionGrid, Solids};
 use crafts::Crafts;
 
 mod bridge;
@@ -63,7 +63,7 @@ const MAX_ITERATIONS: usize = 200;
 /// The deepest a resting contact is pressed in by what it carries, in metres.
 const CONTACT_SAG: f64 = 0.002;
 /// Fewer awake bodies than this are faster done by one thread than handed around.
-const MANY: usize = 128;
+const MANY: usize = 48;
 const GRAVITY: f64 = 9.81;
 const MAX_SPEED: f64 = 80.0;
 const MAX_SPIN: f64 = 30.0;
@@ -238,7 +238,7 @@ struct Profile {
 
 /// Shared by all worlds, and one core is left for the game.
 static WORKERS: LazyLock<Option<ThreadPool>> = LazyLock::new(|| {
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get() - 1);
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).clamp(1, 8));
     ThreadPoolBuilder::new()
         .num_threads(threads.min(8))
         .thread_name(|i| format!("aerolith-physics-{i}"))
@@ -328,6 +328,8 @@ impl World {
         if friction_cells.len() > MAX_BOXES {
             return Err(Fault::Argument("too many friction cells"));
         }
+        // No seams, per-cell friction or bounce to fix. Rapier still runs the hook if the other collider requests it.
+        let plain = boxes.len() == 1 && friction_cells.is_empty() && boxes[0][7] == 0.0;
         let boxes: Vec<_> = boxes
             .iter()
             .map(|b| {
@@ -338,7 +340,10 @@ impl World {
                     None
                 };
                 let mu = grid.as_ref().map_or(b[6], |g| g.cells[0]);
-                let collider = shape.collider(mu, b[7])?.density(0.0);
+                let mut collider = shape.collider(mu, b[7])?.density(0.0);
+                if plain {
+                    collider = collider.active_hooks(ActiveHooks::empty());
+                }
                 Ok((shape, collider.build(), grid))
             })
             .collect::<Result<_>>()?;
@@ -372,8 +377,7 @@ impl World {
             })
             .collect();
         if boxes.len() > 1 {
-            let solids = self.contacts.hulls.entry(handle).or_default();
-            boxes.iter().for_each(|&shape| solids.add(0, shape));
+            self.contacts.hulls.insert(handle, Solids::for_hull(&boxes));
         }
         let body = &mut self.bodies[handle];
         body.recompute_mass_properties_from_colliders(&self.colliders);
@@ -730,6 +734,10 @@ impl World {
                 break;
             }
             // Gravity is among the forces of each body, which are weighed against what carries it.
+            let stage_prof = rapier3d_f64::counters::SolverCounters::aerolith_stage_enabled();
+            if stage_prof {
+                self.pipeline.counters.enable();
+            }
             with_workers(start.len(), || {
                 self.pipeline.step(
                     &Vec3::zeros(),
@@ -747,6 +755,48 @@ impl World {
                     &(),
                 );
             });
+            if stage_prof {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                pub static STAGE: [AtomicU64; 10] = [
+                    AtomicU64::new(0),
+                    AtomicU64::new(0),
+                    AtomicU64::new(0),
+                    AtomicU64::new(0),
+                    AtomicU64::new(0),
+                    AtomicU64::new(0),
+                    AtomicU64::new(0),
+                    AtomicU64::new(0),
+                    AtomicU64::new(0),
+                    AtomicU64::new(0),
+                ];
+                let c = &self.pipeline.counters;
+                let ns = |d: std::time::Duration| d.as_nanos() as u64;
+                STAGE[0].fetch_add(ns(c.cd.broad_phase_time.time()), Ordering::Relaxed);
+                STAGE[1].fetch_add(ns(c.cd.narrow_phase_time.time()), Ordering::Relaxed);
+                STAGE[2].fetch_add(ns(c.stages.island_construction_time.time()), Ordering::Relaxed);
+                STAGE[3].fetch_add(ns(c.stages.solver_time.time()), Ordering::Relaxed);
+                STAGE[4].fetch_add(ns(c.solver.velocity_resolution_time.time()), Ordering::Relaxed);
+                STAGE[5].fetch_add(ns(c.stages.update_time.time()), Ordering::Relaxed);
+                STAGE[6].fetch_add(ns(c.stages.ccd_time.time()), Ordering::Relaxed);
+                STAGE[7].fetch_add(ns(c.stages.user_changes.time()), Ordering::Relaxed);
+                STAGE[8].fetch_add(self.islands.active_dynamic_bodies().len() as u64, Ordering::Relaxed);
+                STAGE[9].fetch_add(self.narrow_phase.contact_graph().interactions().count() as u64, Ordering::Relaxed);
+                if sub + 1 == substeps && (self.profile.ticks + 1).is_multiple_of(100) {
+                    let m = |i: usize| STAGE[i].swap(0, Ordering::Relaxed) as f64 / 100.0e6;
+                    let avg = |i: usize| STAGE[i].swap(0, Ordering::Relaxed) as f64 / (100.0 * substeps as f64);
+                    let s = rapier3d_f64::counters::SolverCounters::aerolith_take_stage_profile();
+                    let sm = |i: usize| s[i] as f64 / 100.0e6;
+                    eprintln!(
+                        "STAGES/tick(ms): bp={:.2} np={:.2} isl={:.2} sol={:.2}(par={:.2}) upd={:.2} ccd={:.2} usr={:.2} | awake/sub={:.1} pairs/sub={:.0}",
+                        m(0), m(1), m(2), m(3), m(4), m(5), m(6), m(7), avg(8), avg(9)
+                    );
+                    eprintln!(
+                        "SOLVER_SUM(cpu-ms/tick): initC={:.2} updC={:.2} warm={:.2} bias={:.2}(sweep={:.2},accel={:.2}) stiff={:.2} int={:.2} stab={:.2}(sweep={:.2}) stf={:.2} | biasCalls={} biasSweeps={} stiffCalls={} stabCalls={} stabSweeps={} onePts={} fourGrps={}",
+                        sm(0), sm(2), sm(3), sm(4), sm(5), sm(6), sm(7), sm(8), sm(9), sm(17), sm(10),
+                        s[12]/100, s[13]/100, s[14]/100, s[15]/100, s[16]/100, s[18]/100, s[19]/100
+                    );
+                }
+            }
             if profiling {
                 self.profile.pipeline += mark.elapsed();
                 mark = std::time::Instant::now();

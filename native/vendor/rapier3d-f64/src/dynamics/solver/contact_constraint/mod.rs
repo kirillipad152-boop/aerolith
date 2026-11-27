@@ -1,7 +1,7 @@
 pub(crate) use generic_one_body_constraint::*;
 // pub(crate) use generic_one_body_constraint_element::*;
 pub(crate) use contact_constraints_set::{
-    ConstraintsCounts, ContactConstraintTypes, ContactConstraintsSet,
+    ConstraintsCounts, ContactConstraintTypes, ContactConstraintsSet, ContactPtrs, ImpulseSlot,
 };
 pub(crate) use generic_two_body_constraint::*;
 pub(crate) use generic_two_body_constraint_element::*;

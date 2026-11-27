@@ -21,6 +21,16 @@ struct Solid {
     high: Vec3,
 }
 
+impl Solid {
+    fn new(owner: i64, shape: BoxShape) -> Self {
+        Self {
+            owner,
+            low: shape.center.coords - shape.half,
+            high: shape.center.coords + shape.half,
+        }
+    }
+}
+
 /// Boxes that fill space together, found by the points in them.
 #[derive(Default)]
 pub(super) struct Solids {
@@ -29,6 +39,17 @@ pub(super) struct Solids {
 }
 
 impl Solids {
+    pub(super) fn for_hull(boxes: &[BoxShape]) -> Self {
+        let mut solids = Self::default();
+        // Checking a few boxes costs less than building and probing a grid for a deck with a mast or side walls.
+        if boxes.len() <= 8 {
+            solids.wide = boxes.iter().map(|&shape| Solid::new(0, shape)).collect();
+        } else {
+            boxes.iter().for_each(|&shape| solids.add(0, shape));
+        }
+        solids
+    }
+
     fn cell(point: Vec3) -> [i32; 3] {
         std::array::from_fn(|i| (point[i] / CELL).floor() as i32)
     }
@@ -46,11 +67,7 @@ impl Solids {
     }
 
     pub(super) fn add(&mut self, owner: i64, shape: BoxShape) {
-        let solid = Solid {
-            owner,
-            low: shape.center.coords - shape.half,
-            high: shape.center.coords + shape.half,
-        };
+        let solid = Solid::new(owner, shape);
         match Self::cells(&solid) {
             Some(cells) => cells.for_each(|c| self.cells.entry(c).or_default().push(solid)),
             None => self.wide.push(solid),
@@ -58,9 +75,7 @@ impl Solids {
     }
 
     pub(super) fn remove(&mut self, owner: i64, shape: BoxShape) {
-        let low = shape.center.coords - shape.half;
-        let high = shape.center.coords + shape.half;
-        match Self::cells(&Solid { owner, low, high }) {
+        match Self::cells(&Solid::new(owner, shape)) {
             Some(cells) => cells.for_each(|c| {
                 if let Some(list) = self.cells.get_mut(&c) {
                     list.retain(|s| s.owner != owner);
@@ -86,37 +101,63 @@ impl Solids {
                 .get(&Self::cell(point))
                 .is_some_and(|list| list.iter().any(inside))
     }
+}
 
-    /// Whether the side of a box that `outward` points out of is covered by another box at `point`. Such a side does not
-    /// exist: whatever slides over the seam between two boxes must not be stopped by it. What is caught inside, though,
-    /// may come out on any side.
-    fn covered(&self, collider: &Collider, point: Pos, outward: Vec3, other: &Collider) -> bool {
-        let Some(cuboid) = collider.shape().as_cuboid() else {
-            return false;
-        };
-        let (half, pose) = (cuboid.half_extents, collider.position());
-        let center = collider
-            .position_wrt_parent()
-            .unwrap_or(pose)
-            .translation
-            .vector;
-        let local = pose.inverse_transform_point(&point).coords;
-        let normal = pose.inverse_transform_vector(&outward);
-        let middle = pose
-            .inverse_transform_point(&Pos::from(other.position().translation.vector))
-            .coords;
-        let covered = (0..3).filter(|&a| normal[a].abs() > FACE).any(|a| {
+/// Geometry shared by all points of a contact manifold on one side.
+struct SeamProbe<'a> {
+    solids: &'a Solids,
+    pose: &'a Pose,
+    half: Vec3,
+    center: Vec3,
+    normal: Vec3,
+    middle: Vec3,
+    other_inside: Option<bool>,
+}
+
+impl<'a> SeamProbe<'a> {
+    fn new(
+        solids: &'a Solids,
+        collider: &'a Collider,
+        outward: Vec3,
+        other: &Collider,
+    ) -> Option<Self> {
+        let pose = collider.position();
+        Some(Self {
+            solids,
+            pose,
+            half: collider.shape().as_cuboid()?.half_extents,
+            center: collider
+                .position_wrt_parent()
+                .unwrap_or(pose)
+                .translation
+                .vector,
+            normal: pose.inverse_transform_vector(&outward),
+            middle: pose
+                .inverse_transform_point(&Pos::from(other.position().translation.vector))
+                .coords,
+            other_inside: None,
+        })
+    }
+
+    /// An internal face must not stop sliding over the seam, but a box caught inside can come out on any side.
+    fn covered(&mut self, point: Pos) -> bool {
+        let local = self.pose.inverse_transform_point(&point).coords;
+        let covered = (0..3).filter(|&a| self.normal[a].abs() > FACE).any(|a| {
             let probe = Vec3::from_fn(|i, _| {
                 if i == a {
-                    (half[a] + PROBE).copysign(normal[a])
+                    (self.half[a] + PROBE).copysign(self.normal[a])
                 } else {
-                    let edge = (half[i] - INSET).max(0.0);
-                    (local[i] + (middle[i] - local[i]).clamp(-INWARD, INWARD)).clamp(-edge, edge)
+                    let edge = (self.half[i] - INSET).max(0.0);
+                    (local[i] + (self.middle[i] - local[i]).clamp(-INWARD, INWARD))
+                        .clamp(-edge, edge)
                 }
             });
-            self.contains(center + probe)
+            self.solids.contains(self.center + probe)
         });
-        covered && !self.contains(center + middle)
+        covered
+            && !*self
+                .other_inside
+                .get_or_insert_with(|| self.solids.contains(self.center + self.middle))
     }
 }
 
@@ -181,17 +222,22 @@ impl Contacts {
 
 impl PhysicsHooks for Contacts {
     fn modify_solver_contacts(&self, context: &mut ContactModificationContext) {
+        if context.solver_contacts.is_empty() {
+            return;
+        }
         let a = &context.colliders[context.collider1];
         let b = &context.colliders[context.collider2];
         let (left, right) = (
             self.friction.get(&context.collider1),
             self.friction.get(&context.collider2),
         );
-        let (around_a, around_b) = (
-            self.solids(context.rigid_body1),
-            self.solids(context.rigid_body2),
-        );
         let normal = *context.normal;
+        let mut around_a = self
+            .solids(context.rigid_body1)
+            .and_then(|s| SeamProbe::new(s, a, normal, b));
+        let mut around_b = self
+            .solids(context.rigid_body2)
+            .and_then(|s| SeamProbe::new(s, b, -normal, a));
         context.solver_contacts.retain_mut(|contact| {
             // A foreseen contact takes away exactly the speed a bounce would have returned.
             if contact.restitution > 0.0 && contact.dist >= TOUCHING {
@@ -200,8 +246,8 @@ impl PhysicsHooks for Contacts {
             // Rapier reports the midpoint; recover the surface point on each box (both skins are zero).
             let half_gap = normal * (contact.dist * 0.5);
             let (on_a, on_b) = (contact.point - half_gap, contact.point + half_gap);
-            if around_a.is_some_and(|s| s.covered(a, on_a, normal, b))
-                || around_b.is_some_and(|s| s.covered(b, on_b, -normal, a))
+            if around_a.as_mut().is_some_and(|s| s.covered(on_a))
+                || around_b.as_mut().is_some_and(|s| s.covered(on_b))
             {
                 return false;
             }

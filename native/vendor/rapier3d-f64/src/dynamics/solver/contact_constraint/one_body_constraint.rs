@@ -389,17 +389,27 @@ impl OneBodyConstraint {
 
     pub fn warmstart(&mut self, solver_vels: &mut [SolverVel<Real>]) {
         let mut solver_vel2 = solver_vels[self.solver_vel2];
+        self.warmstart_local(&mut solver_vel2);
+        solver_vels[self.solver_vel2] = solver_vel2;
+    }
 
+    #[inline(always)]
+    pub unsafe fn warmstart_ptr(&mut self, solver_vels: *mut SolverVel<Real>) {
+        let mut solver_vel2 = *solver_vels.add(self.solver_vel2);
+        self.warmstart_local(&mut solver_vel2);
+        *solver_vels.add(self.solver_vel2) = solver_vel2;
+    }
+
+    #[inline(always)]
+    fn warmstart_local(&mut self, solver_vel2: &mut SolverVel<Real>) {
         OneBodyConstraintElement::warmstart_group(
             &mut self.elements[..self.num_contacts as usize],
             &self.dir1,
             #[cfg(feature = "dim3")]
             &self.tangent1,
             &self.im2,
-            &mut solver_vel2,
+            solver_vel2,
         );
-
-        solver_vels[self.solver_vel2] = solver_vel2;
     }
 
     pub fn solve(
@@ -409,7 +419,29 @@ impl OneBodyConstraint {
         solve_friction: bool,
     ) {
         let mut solver_vel2 = solver_vels[self.solver_vel2];
+        self.solve_local(&mut solver_vel2, solve_normal, solve_friction);
+        solver_vels[self.solver_vel2] = solver_vel2;
+    }
 
+    #[inline(always)]
+    pub unsafe fn solve_ptr(
+        &mut self,
+        solver_vels: *mut SolverVel<Real>,
+        solve_normal: bool,
+        solve_friction: bool,
+    ) {
+        let mut solver_vel2 = *solver_vels.add(self.solver_vel2);
+        self.solve_local(&mut solver_vel2, solve_normal, solve_friction);
+        *solver_vels.add(self.solver_vel2) = solver_vel2;
+    }
+
+    #[inline(always)]
+    fn solve_local(
+        &mut self,
+        solver_vel2: &mut SolverVel<Real>,
+        solve_normal: bool,
+        solve_friction: bool,
+    ) {
         OneBodyConstraintElement::solve_group(
             self.cfm_factor,
             &mut self.elements[..self.num_contacts as usize],
@@ -417,12 +449,10 @@ impl OneBodyConstraint {
             #[cfg(feature = "dim3")]
             &self.tangent1,
             &self.im2,
-            &mut solver_vel2,
+            solver_vel2,
             solve_normal,
             solve_friction,
         );
-
-        solver_vels[self.solver_vel2] = solver_vel2;
     }
 
     // FIXME: duplicated code. This is exactly the same as in the two-body velocity constraint.

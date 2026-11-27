@@ -31,7 +31,7 @@ public final class WorldPhysics {
     private final ServerLevel level;
     private final FrictionConfig materials;
     private final Terrain terrain;
-    final CraftSections sections = new CraftSections();
+    final CraftSections sections;
     private final Map<CraftEntity, Body> crafts = new LinkedHashMap<>();
     private final Long2ObjectOpenHashMap<Body> bodies = new Long2ObjectOpenHashMap<>();
     private long world;
@@ -72,6 +72,7 @@ public final class WorldPhysics {
 
     private WorldPhysics(ServerLevel level) {
         this.level = level;
+        this.sections = HullCollisions.sections(level);
         this.materials = new FrictionConfig();
         this.terrain = new Terrain(level, materials);
     }
@@ -393,7 +394,8 @@ public final class WorldPhysics {
     /** Claims the ground the craft can reach in the next tick; false if some of it is not loaded. */
     private boolean standsOnLoadedGround(Body body) {
         CraftEntity craft = body.craft;
-        // An impulse or impact can start a stationary body turning this tick. Last tick's spin is not a bound.
+        // An impulse or impact can start a stationary body turning this tick. Last tick's spin is not a bound, nor its speed:
+        // a margin scaled by speed lets the first impulse carry a resting craft through a wall it never claimed.
         Vec3 c = craft.worldCenterOfMass();
         double r = craft.hull().radius + SWEEP_MARGIN;
         AABB box = craft.getBoundingBox().inflate(CORNER_MARGIN);

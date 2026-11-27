@@ -253,42 +253,34 @@ impl PhysicsPipeline {
 
         #[cfg(feature = "parallel")]
         {
+            use crate::dynamics::{IntraIslandGuard, INTRA_ISLAND_MIN_MANIFOLDS};
             use crate::geometry::ContactManifold;
             use rayon::prelude::*;
             use std::sync::atomic::Ordering;
 
             let num_islands = islands.num_islands();
             let solvers = &mut self.solvers[..num_islands];
-            let bodies = &std::sync::atomic::AtomicPtr::new(bodies as *mut _);
-            let manifolds = &std::sync::atomic::AtomicPtr::new(&mut manifolds as *mut _);
-            let impulse_joints =
-                &std::sync::atomic::AtomicPtr::new(impulse_joints.joints_vec_mut() as *mut _);
-            let multibody_joints = &std::sync::atomic::AtomicPtr::new(multibody_joints as *mut _);
             let manifold_indices = &self.manifold_indices[..];
             let joint_constraint_indices = &self.joint_constraint_indices[..];
 
-            // PERF: right now, we are only doing islands-based parallelism.
-            //       Intra-island parallelism (that hasn’t been ported to the new
-            //       solver yet) will be supported in the future.
-            self.counters.solver.velocity_resolution_time.resume();
-            rayon::scope(|_scope| {
-                enable_flush_to_zero!();
-
-                solvers
-                    .par_iter_mut()
+            let can_intra = rayon::current_num_threads() > 1
+                && solvers
+                    .iter()
                     .enumerate()
-                    .for_each(|(island_id, solver)| {
-                        let bodies: &mut RigidBodySet =
-                            unsafe { &mut *bodies.load(Ordering::Relaxed) };
-                        let manifolds: &mut Vec<&mut ContactManifold> =
-                            unsafe { &mut *manifolds.load(Ordering::Relaxed) };
-                        let impulse_joints: &mut Vec<JointGraphEdge> =
-                            unsafe { &mut *impulse_joints.load(Ordering::Relaxed) };
-                        let multibody_joints: &mut MultibodyJointSet =
-                            unsafe { &mut *multibody_joints.load(Ordering::Relaxed) };
+                    .any(|(id, _)| manifold_indices[id].len() >= INTRA_ISLAND_MIN_MANIFOLDS);
+            let intra_guard = if can_intra {
+                IntraIslandGuard::try_acquire()
+            } else {
+                None
+            };
 
+            self.counters.solver.velocity_resolution_time.resume();
+            if intra_guard.is_some() {
+                enable_flush_to_zero!();
+                for (island_id, solver) in solvers.iter_mut().enumerate() {
+                    if manifold_indices[island_id].len() >= INTRA_ISLAND_MIN_MANIFOLDS {
                         let mut counters = Counters::new(false);
-                        solver.init_and_solve(
+                        solver.init_and_solve_parallel(
                             island_id,
                             &mut counters,
                             integration_parameters,
@@ -296,12 +288,61 @@ impl PhysicsPipeline {
                             bodies,
                             &mut manifolds[..],
                             &manifold_indices[island_id],
-                            impulse_joints,
+                            impulse_joints.joints_mut(),
                             &joint_constraint_indices[island_id],
                             multibody_joints,
-                        )
-                    });
-            });
+                        );
+                    }
+                }
+            }
+
+            let has_small = intra_guard.is_none()
+                || (0..num_islands)
+                    .any(|id| manifold_indices[id].len() < INTRA_ISLAND_MIN_MANIFOLDS);
+            if has_small {
+                let bodies = &std::sync::atomic::AtomicPtr::new(bodies as *mut _);
+                let manifolds = &std::sync::atomic::AtomicPtr::new(&mut manifolds as *mut _);
+                let impulse_joints =
+                    &std::sync::atomic::AtomicPtr::new(impulse_joints.joints_vec_mut() as *mut _);
+                let multibody_joints = &std::sync::atomic::AtomicPtr::new(multibody_joints as *mut _);
+
+                rayon::scope(|_scope| {
+                    enable_flush_to_zero!();
+
+                    solvers
+                        .par_iter_mut()
+                        .enumerate()
+                        .filter(|(id, _)| {
+                            intra_guard.is_none()
+                                || manifold_indices[*id].len() < INTRA_ISLAND_MIN_MANIFOLDS
+                        })
+                        .for_each(|(island_id, solver)| {
+                            let bodies: &mut RigidBodySet =
+                                unsafe { &mut *bodies.load(Ordering::Relaxed) };
+                            let manifolds: &mut Vec<&mut ContactManifold> =
+                                unsafe { &mut *manifolds.load(Ordering::Relaxed) };
+                            let impulse_joints: &mut Vec<JointGraphEdge> =
+                                unsafe { &mut *impulse_joints.load(Ordering::Relaxed) };
+                            let multibody_joints: &mut MultibodyJointSet =
+                                unsafe { &mut *multibody_joints.load(Ordering::Relaxed) };
+
+                            let mut counters = Counters::new(false);
+                            solver.init_and_solve(
+                                island_id,
+                                &mut counters,
+                                integration_parameters,
+                                islands,
+                                bodies,
+                                &mut manifolds[..],
+                                &manifold_indices[island_id],
+                                impulse_joints,
+                                &joint_constraint_indices[island_id],
+                                multibody_joints,
+                            )
+                        });
+                });
+            }
+            drop(intra_guard);
             self.counters.solver.velocity_resolution_time.pause();
         }
 

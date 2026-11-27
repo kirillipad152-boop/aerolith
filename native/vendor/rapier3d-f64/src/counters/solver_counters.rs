@@ -1,5 +1,33 @@
 use crate::counters::Timer;
 use std::fmt::{Display, Formatter, Result};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    OnceLock,
+};
+
+#[doc(hidden)]
+pub static AEROLITH_STAGE_ATOMICS: [AtomicU64; 20] = [
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+];
 
 /// Performance counters related to constraints resolution.
 #[derive(Default, Clone, Copy)]
@@ -19,6 +47,27 @@ pub struct SolverCounters {
 }
 
 impl SolverCounters {
+    /// Whether stage profiling is enabled.
+    pub fn aerolith_stage_enabled() -> bool {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        *ENABLED.get_or_init(|| std::env::var_os("AEROLITH_STAGE_PROFILE").is_some())
+    }
+
+    /// Increment an atomic stage counter.
+    #[inline(always)]
+    pub fn aerolith_add(idx: usize, val: u64) {
+        AEROLITH_STAGE_ATOMICS[idx].fetch_add(val, Ordering::Relaxed);
+    }
+
+    /// Take and reset atomic solver stage counters.
+    pub fn aerolith_take_stage_profile() -> [u64; 20] {
+        let mut out = [0u64; 20];
+        for (slot, dst) in AEROLITH_STAGE_ATOMICS.iter().zip(&mut out) {
+            *dst = slot.swap(0, Ordering::Relaxed);
+        }
+        out
+    }
+
     /// Creates a new counter initialized to zero.
     pub fn new() -> Self {
         SolverCounters {

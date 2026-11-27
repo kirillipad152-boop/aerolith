@@ -454,7 +454,27 @@ impl TwoBodyConstraint {
     pub fn warmstart(&mut self, solver_vels: &mut [SolverVel<Real>]) {
         let mut solver_vel1 = solver_vels[self.solver_vel1];
         let mut solver_vel2 = solver_vels[self.solver_vel2];
+        self.warmstart_local(&mut solver_vel1, &mut solver_vel2);
+        solver_vels[self.solver_vel1] = solver_vel1;
+        solver_vels[self.solver_vel2] = solver_vel2;
+    }
 
+    #[inline(always)]
+    pub unsafe fn warmstart_ptr(&mut self, solver_vels: *mut SolverVel<Real>) {
+        debug_assert_ne!(self.solver_vel1, self.solver_vel2);
+        let mut solver_vel1 = *solver_vels.add(self.solver_vel1);
+        let mut solver_vel2 = *solver_vels.add(self.solver_vel2);
+        self.warmstart_local(&mut solver_vel1, &mut solver_vel2);
+        *solver_vels.add(self.solver_vel1) = solver_vel1;
+        *solver_vels.add(self.solver_vel2) = solver_vel2;
+    }
+
+    #[inline(always)]
+    fn warmstart_local(
+        &mut self,
+        solver_vel1: &mut SolverVel<Real>,
+        solver_vel2: &mut SolverVel<Real>,
+    ) {
         TwoBodyConstraintElement::warmstart_group(
             &mut self.elements[..self.num_contacts as usize],
             &self.dir1,
@@ -462,12 +482,9 @@ impl TwoBodyConstraint {
             &self.tangent1,
             &self.im1,
             &self.im2,
-            &mut solver_vel1,
-            &mut solver_vel2,
+            solver_vel1,
+            solver_vel2,
         );
-
-        solver_vels[self.solver_vel1] = solver_vel1;
-        solver_vels[self.solver_vel2] = solver_vel2;
     }
 
     pub fn solve(
@@ -478,7 +495,34 @@ impl TwoBodyConstraint {
     ) {
         let mut solver_vel1 = solver_vels[self.solver_vel1];
         let mut solver_vel2 = solver_vels[self.solver_vel2];
+        self.solve_local(&mut solver_vel1, &mut solver_vel2, solve_normal, solve_friction);
+        solver_vels[self.solver_vel1] = solver_vel1;
+        solver_vels[self.solver_vel2] = solver_vel2;
+    }
 
+    #[inline(always)]
+    pub unsafe fn solve_ptr(
+        &mut self,
+        solver_vels: *mut SolverVel<Real>,
+        solve_normal: bool,
+        solve_friction: bool,
+    ) {
+        debug_assert_ne!(self.solver_vel1, self.solver_vel2);
+        let mut solver_vel1 = *solver_vels.add(self.solver_vel1);
+        let mut solver_vel2 = *solver_vels.add(self.solver_vel2);
+        self.solve_local(&mut solver_vel1, &mut solver_vel2, solve_normal, solve_friction);
+        *solver_vels.add(self.solver_vel1) = solver_vel1;
+        *solver_vels.add(self.solver_vel2) = solver_vel2;
+    }
+
+    #[inline(always)]
+    fn solve_local(
+        &mut self,
+        solver_vel1: &mut SolverVel<Real>,
+        solver_vel2: &mut SolverVel<Real>,
+        solve_normal: bool,
+        solve_friction: bool,
+    ) {
         TwoBodyConstraintElement::solve_group(
             self.cfm_factor,
             &mut self.elements[..self.num_contacts as usize],
@@ -487,14 +531,11 @@ impl TwoBodyConstraint {
             &self.tangent1,
             &self.im1,
             &self.im2,
-            &mut solver_vel1,
-            &mut solver_vel2,
+            solver_vel1,
+            solver_vel2,
             solve_normal,
             solve_friction,
         );
-
-        solver_vels[self.solver_vel1] = solver_vel1;
-        solver_vels[self.solver_vel2] = solver_vel2;
     }
 
     pub fn writeback_impulses(&self, manifolds_all: &mut [&mut ContactManifold]) {

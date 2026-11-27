@@ -118,6 +118,25 @@ public final class HullCollisionGameTests {
         test.succeed();
     }
 
+    public static void translatingHullPushesEveryEntityInACrowd(GameTestHelper test) {
+        Vec3 origin = origin(test).add(0, 48, 0);
+        CraftBlock[] wall = new CraftBlock[28];
+        for (int i = 0; i < wall.length; i++) wall[i] = planks(new BlockPos(0, i / 7, i % 7 - 3));
+        CraftEntity craft = craft(test, origin, wall);
+        ItemEntity[] crowd = new ItemEntity[112];
+        for (int i = 0; i < crowd.length; i++) {
+            crowd[i] = item(test, origin.add(0.8, i / 16 * 0.38 - 0.125, i % 16 * 0.36 - 2.7));
+        }
+        pose(craft, origin.add(0.9, 0, 0), new Quaternionf());
+        for (int i = 0; i < crowd.length; i++) {
+            near(test, crowd[i], origin.add(1.525, i / 16 * 0.38 - 0.125, i % 16 * 0.36 - 2.7),
+                    "A moving hull skipped entity " + i);
+            crowd[i].discard();
+        }
+        craft.discard();
+        test.succeed();
+    }
+
     @SuppressWarnings("removal")
     public static void playerCrouchesAndPacketsRespectDeck(GameTestHelper test) {
         Vec3 origin = origin(test);

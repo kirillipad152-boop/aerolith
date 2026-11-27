@@ -34,8 +34,10 @@ public final class HullCollisions {
     private static final double FLOOR_NORMAL = 0.65;
     private static final double DEEP_OVERLAP = 0.2;
     private static final double POSE_STEP = 0.25;
-    private static final int MAX_POSE_STEPS = 16;
+    private static final int MAX_POSE_STEPS = 256;
+    private static final double MAX_ESCAPE_DEPTH = 0.65;
     private static final Map<Level, Set<CraftEntity>> CRAFTS = new ConcurrentHashMap<>();
+    private static final Map<Level, CraftSections> SECTIONS = new ConcurrentHashMap<>();
     private static final Vec3[] WORLD = {new Vec3(1, 0, 0), new Vec3(0, 1, 0), new Vec3(0, 0, 1)};
     private static final List<Axis> ALIGNED = List.of(new Axis(WORLD[0], WORLD), new Axis(WORLD[1], WORLD),
             new Axis(WORLD[2], WORLD));
@@ -60,6 +62,14 @@ public final class HullCollisions {
     static Set<CraftEntity> crafts(Level level) {
         Set<CraftEntity> crafts = CRAFTS.get(level);
         return crafts == null ? Set.of() : crafts;
+    }
+
+    static CraftSections sections(Level level) {
+        return SECTIONS.computeIfAbsent(level, unused -> new CraftSections());
+    }
+
+    static CraftSections sectionsIfPresent(Level level) {
+        return SECTIONS.get(level);
     }
 
     @SubscribeEvent
@@ -91,6 +101,7 @@ public final class HullCollisions {
     @SubscribeEvent
     public static void onUnload(LevelEvent.Unload event) {
         CRAFTS.remove(event.getLevel());
+        SECTIONS.remove(event.getLevel());
     }
 
     /** Receives the push of the local player against a hull so it can be sent to the server. */
@@ -113,7 +124,9 @@ public final class HullCollisions {
     public static Vec3 clipMovement(Entity entity, Vec3 vanilla) {
         if (!eligible(entity) || !CRAFTS.containsKey(entity.level()) || negligible(vanilla)) return vanilla;
         AABB start = entity.getBoundingBox();
-        if (hitCrafts(entity, new Sweep(start, vanilla), null) == null && !standsOnHull(entity, start, vanilla)) return vanilla;
+        Sweep initial = new Sweep(start, vanilla);
+        Hit initialHit = hitCrafts(entity, initial, null);
+        if (initialHit == null && !standsOnHull(entity, start, vanilla)) return vanilla;
 
         AABB box = start;
         Vec3 total = Vec3.ZERO;
@@ -129,7 +142,8 @@ public final class HullCollisions {
 
         Vec3 rest = new Vec3(vanilla.x, 0, vanilla.z);
         for (int pass = 0; pass < 5 && !negligible(rest); pass++) {
-            Hit hit = blocking(entity, new Sweep(box, rest));
+            Hit hit = pass == 0 && vanilla.y == 0 ? earlier(initialHit, hitWorld(entity, initial))
+                    : blocking(entity, new Sweep(box, rest));
             if (hit == null) {
                 total = total.add(rest);
                 box = box.move(rest);
@@ -214,43 +228,44 @@ public final class HullCollisions {
      * every tick.
      */
     public static boolean blocksPlayerMove(Entity player, AABB start, Vec3 destination) {
-        Set<CraftEntity> crafts = CRAFTS.get(player.level());
-        if (!eligible(player) || crafts == null) return false;
+        CraftSections sections = SECTIONS.get(player.level());
+        if (!eligible(player) || sections == null) return false;
         Vec3 center = start.getCenter();
-        AABB end = start.move(destination.x - center.x, destination.y - start.minY, destination.z - center.z);
-        for (CraftEntity craft : crafts) {
-            if (craft.isRemoved() || craft.collisionBoxes().isEmpty() || !craft.getBoundingBox().intersects(end)) continue;
-            Pose pose = new Pose(craft.position(), craft.orientation(1));
-            Hit overlap = overlapAt(end, pose, craft.collisionBoxes());
-            if (overlap != null && overlap.depth > DEEP_OVERLAP && overlapAt(start, pose, craft.collisionBoxes()) == null) {
-                return true;
-            }
-        }
-        return false;
+        Vec3 delta = new Vec3(destination.x - center.x, destination.y - start.minY, destination.z - center.z);
+        AABB end = start.move(delta);
+        AABB swept = start.minmax(end);
+        AABB coreStart = start.deflate(
+                Math.min(DEEP_OVERLAP, start.getXsize() * 0.45),
+                Math.min(DEEP_OVERLAP, start.getYsize() * 0.45),
+                Math.min(DEEP_OVERLAP, start.getZsize() * 0.45));
+        Sweep coreSweep = new Sweep(coreStart, delta);
+        boolean moved = delta.lengthSqr() > EPS * EPS;
+        return sections.anyNear(swept, craft -> {
+            if (craft.isRemoved() || craft.collisionBoxes().isEmpty() || !craft.getBoundingBox().intersects(swept)) return false;
+            Pose pose = craft.collisionPose();
+            List<AABB> boxes = craft.collisionBoxes();
+            if (overlapAt(coreStart, pose, boxes) != null) return false;
+            Hit overlap = overlapAt(end, pose, boxes);
+            if (overlap != null && overlap.depth > DEEP_OVERLAP) return true;
+            return moved && hitPose(coreSweep, pose, boxes, null) != null;
+        });
     }
 
     public static boolean hasSupport(Entity entity, AABB box, double distance) {
-        return eligible(entity) && CRAFTS.containsKey(entity.level())
+        return eligible(entity) && SECTIONS.containsKey(entity.level())
                 && isFloor(hitCrafts(entity, new Sweep(box, new Vec3(0, -distance, 0)), null));
     }
 
     /** Whether the box overlaps the real block shapes (not the bounds) of any craft other than {@code except}. */
     static boolean overlapsCraft(Level level, AABB box, CraftEntity except) {
-        if (level instanceof ServerLevel server) {
-            return WorldPhysics.of(server).sections.anyNear(box, craft -> overlaps(craft, box, except));
-        }
-        Set<CraftEntity> crafts = CRAFTS.get(level);
-        if (crafts == null) return false;
-        for (CraftEntity craft : crafts) {
-            if (overlaps(craft, box, except)) return true;
-        }
-        return false;
+        CraftSections sections = SECTIONS.get(level);
+        return sections != null && sections.anyNear(box, craft -> overlaps(craft, box, except));
     }
 
     private static boolean overlaps(CraftEntity craft, AABB box, CraftEntity except) {
         if (craft == except || craft.isRemoved() || !craft.getBoundingBox().intersects(box)) return false;
         List<AABB> parts = craft.collisionBoxes();
-        return !parts.isEmpty() && overlapAt(box, new Pose(craft.position(), craft.orientation(1)), parts) != null;
+        return !parts.isEmpty() && overlapAt(box, craft.collisionPose(), parts) != null;
     }
 
     record Support(Entity entity, Vec3 point) {}
@@ -272,7 +287,7 @@ public final class HullCollisions {
         List<Entity> near = entitiesNear(craft, craft.getBoundingBox().inflate(0.5),
                 entity -> entity instanceof LivingEntity && entity.onGround() && eligible(entity));
         if (near.isEmpty()) return List.of();
-        Pose pose = new Pose(craft.position(), craft.orientation(1));
+        Pose pose = craft.collisionPose();
         List<Support> result = new ArrayList<>();
         for (Entity entity : near) {
             Sweep probe = new Sweep(entity.getBoundingBox(), new Vec3(0, -2 * SUPPORT_DISTANCE, 0));
@@ -283,7 +298,7 @@ public final class HullCollisions {
     }
 
     static Vec3 localPoint(CraftEntity craft, Vec3 world) {
-        return new Pose(craft.position(), craft.orientation(1)).localPoint(world);
+        return craft.collisionPose().localPoint(world);
     }
 
     public static void onPoseChanged(CraftEntity craft, Vec3 previousPos, Quaternionfc previousRot) {
@@ -311,15 +326,15 @@ public final class HullCollisions {
 
         for (int step = 1; step <= steps; step++) {
             float fraction = (float) step / steps;
-            Pose after = new Pose(previousPos.lerp(position, fraction), new Quaternionf(previousRot).slerp(rotation, fraction));
-            for (Entity entity : nearby) carryOrPush(craft, entity, boxes, before, after);
+            Pose after = before.at(previousPos.lerp(position, fraction), new Quaternionf(previousRot).slerp(rotation, fraction));
+            Vec3 translation = after.origin.subtract(before.origin);
+            for (Entity entity : nearby) carryOrPush(craft, entity, boxes, before, after, translation);
             before = after;
         }
     }
 
-    private static void carryOrPush(CraftEntity craft, Entity entity, List<AABB> boxes, Pose before, Pose after) {
+    private static void carryOrPush(CraftEntity craft, Entity entity, List<AABB> boxes, Pose before, Pose after, Vec3 translation) {
         AABB start = entity.getBoundingBox();
-        Vec3 translation = after.origin.subtract(before.origin);
         Vec3 desired = Vec3.ZERO;
         Sweep probe = new Sweep(start, new Vec3(0, -SUPPORT_DISTANCE, 0));
         Hit floor = hitPose(probe, before, boxes, null);
@@ -340,20 +355,30 @@ public final class HullCollisions {
         Vec3 accepted = safeCarry(entity, new Sweep(start, desired), craft, null);
 
         // Small rotation or a shortened carry can leave the new pose slightly inside the entity.
-        for (int i = 0; i < 3; i++) {
-            AABB current = start.move(accepted);
-            Hit overlap = overlapAt(current, after, boxes);
-            if (overlap == null || overlap.depth > POSE_STEP) break;
-            Sweep escape = new Sweep(current, overlap.normal.scale(overlap.depth + 2 * EPS));
+        AABB end = start.move(accepted);
+        Hit overlap = overlapAt(end, after, boxes);
+        for (int i = 0; i < 6 && overlap != null && overlap.depth <= MAX_ESCAPE_DEPTH; i++) {
+            Sweep escape = new Sweep(end, overlap.normal.scale(overlap.depth + 2 * EPS));
             Hit ownHull = earlier(hitPose(escape, after, boxes, null),
-                    hitPose(new Sweep(current.move(translation.scale(-1)), escape.motion), before, boxes, null));
+                    hitPose(new Sweep(end.move(translation.scale(-1)), escape.motion), before, boxes, null));
             Vec3 correction = safeCarry(entity, escape, craft, ownHull);
+            if (negligible(correction) && escape.motion.y < -EPS) {
+                double horiz = Math.hypot(overlap.normal.x, overlap.normal.z);
+                if (horiz > 0.1) {
+                    double scale = Math.min(MAX_ESCAPE_DEPTH, (overlap.depth + 2 * EPS) / horiz);
+                    Sweep flatEscape = new Sweep(end, new Vec3(overlap.normal.x / horiz * scale, 0.0, overlap.normal.z / horiz * scale));
+                    Hit flatOwn = earlier(hitPose(flatEscape, after, boxes, null),
+                            hitPose(new Sweep(end.move(translation.scale(-1)), flatEscape.motion), before, boxes, null));
+                    correction = safeCarry(entity, flatEscape, craft, flatOwn);
+                }
+            }
             if (negligible(correction)) break;
             accepted = accepted.add(correction);
+            end = start.move(accepted);
+            overlap = overlapAt(end, after, boxes);
         }
         if (negligible(accepted)) return;
-        AABB end = start.move(accepted);
-        if (overlapAt(end, after, boxes) != null && overlapAt(start, after, boxes) == null) return;
+        if (overlap != null && overlapAt(start, after, boxes) == null) return;
         entity.setPos(entity.position().add(accepted));
         if (!entity.level().isClientSide()) entity.needsSync = true;
         if (supported && isFloor(hitPose(new Sweep(end, probe.motion), after, boxes, null))) entity.setOnGround(true);
@@ -384,7 +409,10 @@ public final class HullCollisions {
         if (many) {
             List<Entity> found = new ArrayList<>();
             for (Entity entity : level.getAllEntities()) {
-                if (eligible(entity) && found.size() <= CROWD) found.add(entity);
+                if (eligible(entity)) {
+                    found.add(entity);
+                    if (found.size() > CROWD) break;
+                }
             }
             if (found.size() <= CROWD) crowd = new Crowd(level, found);
         }
@@ -427,21 +455,26 @@ public final class HullCollisions {
 
     private static Hit hitCrafts(Entity entity, Sweep path, CraftEntity excluded) {
         Level level = entity.level();
-        Set<CraftEntity> crafts = CRAFTS.get(level);
-        Hit best = null;
-        if (crafts != null) {
-            for (CraftEntity craft : crafts) {
-                if (craft.isRemoved()) {
-                    forget(level, craft);
-                } else if (craft != excluded && craft.getBoundingBox().intersects(path.bounds)
-                        && level.getEntity(craft.getId()) == craft && !craft.collisionBoxes().isEmpty()) {
-                    craft.touchedAt = level.getGameTime();
-                    Hit hit = hitPose(path, new Pose(craft.position(), craft.orientation(1)), craft.collisionBoxes(), null);
-                    if (hit != null) best = earlier(best, new Hit(hit.time, hit.normal, hit.depth, craft));
-                }
+        CraftSections sections = SECTIONS.get(level);
+        if (sections == null) return null;
+        Hit[] best = {null};
+        List<CraftEntity> gone = new ArrayList<>(0);
+        sections.forEachNear(path.bounds, craft -> {
+            // Removing from the index while it is being walked would skip neighbours of the removed craft.
+            if (craft.isRemoved()) {
+                gone.add(craft);
+            } else if (craft != excluded && craft.getBoundingBox().intersects(path.bounds)
+                    && level.getEntity(craft.getId()) == craft && !craft.collisionBoxes().isEmpty()) {
+                craft.touchedAt = level.getGameTime();
+                Hit hit = hitPose(path, craft.collisionPose(), craft.collisionBoxes(), null);
+                if (hit != null) best[0] = earlier(best[0], new Hit(hit.time, hit.normal, hit.depth, craft));
             }
+        });
+        for (CraftEntity craft : gone) {
+            forget(level, craft);
+            sections.remove(craft);
         }
-        return best;
+        return best[0];
     }
 
     private static void forget(Level level, CraftEntity craft) {
@@ -451,29 +484,13 @@ public final class HullCollisions {
         });
     }
 
-    /** The boxes that can touch {@code region}: those of a hull's index near it, or all of a short list. */
-    private static Iterable<AABB> candidates(List<AABB> boxes, AABB region) {
-        if (!(boxes instanceof BoxIndex index)) return boxes;
-        var found = index.near(region);
-        return () -> new java.util.Iterator<>() {
-            int next;
-
-            @Override
-            public boolean hasNext() {
-                return next < found.size();
-            }
-
-            @Override
-            public AABB next() {
-                return index.get(found.getInt(next++));
-            }
-        };
-    }
-
     private static Hit hitPose(Sweep path, Pose pose, List<AABB> boxes, Hit best) {
+        if (path.motion.lengthSqr() == 0) return best;
         AABB broad = pose.localBounds(path.bounds);
-        for (AABB box : candidates(boxes, broad)) {
-            if (box.intersects(broad)) {
+        var near = boxes instanceof BoxIndex index ? index.near(broad) : null;
+        for (int i = 0, size = near == null ? boxes.size() : near.size(); i < size; i++) {
+            AABB box = boxes.get(near == null ? i : near.getInt(i));
+            if (near != null || box.intersects(broad)) {
                 Hit hit = sweep(path, pose.worldPoint(box.getCenter()), halfSize(box), pose.axes);
                 best = earlier(best, opposing(path, hit));
             }
@@ -484,9 +501,11 @@ public final class HullCollisions {
     private static Hit overlapAt(AABB box, Pose pose, List<AABB> boxes) {
         Sweep path = new Sweep(box, Vec3.ZERO);
         AABB broad = pose.localBounds(path.bounds);
+        var near = boxes instanceof BoxIndex index ? index.near(broad) : null;
         Hit deepest = null;
-        for (AABB part : candidates(boxes, broad)) {
-            if (part.intersects(broad)) {
+        for (int i = 0, size = near == null ? boxes.size() : near.size(); i < size; i++) {
+            AABB part = boxes.get(near == null ? i : near.getInt(i));
+            if (near != null || part.intersects(broad)) {
                 Hit overlap = sweep(path, pose.worldPoint(part.getCenter()), halfSize(part), pose.axes);
                 if (overlap != null && (deepest == null || overlap.depth > deepest.depth)) deepest = overlap;
             }
@@ -530,6 +549,7 @@ public final class HullCollisions {
         double depth = Double.POSITIVE_INFINITY;
         Vec3 normal = null;
         Vec3 escape = null;
+        double normalSign = 1, escapeSign = 1;
         // Intersect the time intervals of all separating axes, not just either box's face axes.
         for (Axis axis : axes) {
             double radius = path.half.dot(axis.world) + half.dot(axis.local) - EPS;
@@ -538,7 +558,8 @@ public final class HullCollisions {
             double penetration = radius - Math.abs(start);
             if (penetration < depth) {
                 depth = penetration;
-                escape = axis.normal.scale(Math.copySign(1, start == 0 ? velocity : start));
+                escape = axis.normal;
+                escapeSign = Math.copySign(1, start == 0 ? velocity : start);
             }
             if (Math.abs(velocity) < 1.0e-12) {
                 if (penetration <= 0) return null;
@@ -549,13 +570,14 @@ public final class HullCollisions {
             double near = Math.min(t0, t1);
             if (near > enter) {
                 enter = near;
-                normal = axis.normal.scale(-Math.signum(velocity));
+                normal = axis.normal;
+                normalSign = -Math.signum(velocity);
             }
             exit = Math.min(exit, Math.max(t0, t1));
             if (enter >= exit || enter >= 1 || exit <= 0) return null;
         }
-        if (depth > 0) return new Hit(0, escape, depth, null);
-        return new Hit(Math.max(0, enter), normal, 0, null);
+        if (depth > 0) return new Hit(0, escape.scale(escapeSign), depth, null);
+        return new Hit(Math.max(0, enter), normal.scale(normalSign), 0, null);
     }
 
     private static Vec3 halfSize(AABB box) {
@@ -580,19 +602,37 @@ public final class HullCollisions {
         }
     }
 
-    private static final class Pose {
+    static final class Pose {
         final Vec3 origin;
-        final Vec3[] basis = new Vec3[3];
-        final List<Axis> axes = new ArrayList<>(15);
+        final Vec3[] basis;
+        final List<Axis> axes;
+        private final float x, y, z, w;
 
         Pose(Vec3 origin, Quaternionfc rotation) {
+            this(origin, rotation, null);
+        }
+
+        private Pose(Vec3 origin, Quaternionfc rotation, Pose sameRotation) {
             this.origin = origin;
-            Vec3 imaginary = new Vec3(rotation.x(), rotation.y(), rotation.z());
-            double w = rotation.w();
-            double factor = 2 / (imaginary.lengthSqr() + w * w);
+            x = rotation.x(); y = rotation.y(); z = rotation.z(); w = rotation.w();
+            if (sameRotation != null) {
+                basis = sameRotation.basis;
+                axes = sameRotation.axes;
+                return;
+            }
+            if (x == 0 && y == 0 && z == 0 && w != 0) {
+                basis = WORLD;
+                axes = ALIGNED;
+                return;
+            }
+            basis = new Vec3[3];
+            axes = new ArrayList<>(15);
+            Vec3 imaginary = new Vec3(x, y, z);
+            double real = w;
+            double factor = 2 / (imaginary.lengthSqr() + real * real);
             for (int i = 0; i < 3; i++) {
                 Vec3 t = imaginary.cross(WORLD[i]).scale(factor);
-                basis[i] = WORLD[i].add(t.scale(w)).add(imaginary.cross(t));
+                basis[i] = WORLD[i].add(t.scale(real)).add(imaginary.cross(t));
             }
             for (Vec3 axis : WORLD) axes.add(new Axis(axis, basis));
             for (Vec3 axis : basis) axes.add(new Axis(axis, basis));
@@ -605,16 +645,26 @@ public final class HullCollisions {
             }
         }
 
+        /** A translation changes no separating axis; reuse them regardless of how many entities query this pose. */
+        Pose at(Vec3 position, Quaternionfc rotation) {
+            boolean sameRotation = x == rotation.x() && y == rotation.y() && z == rotation.z() && w == rotation.w();
+            if (sameRotation && origin.equals(position)) return this;
+            return new Pose(position, rotation, sameRotation ? this : null);
+        }
+
         Vec3 worldPoint(Vec3 local) {
+            if (basis == WORLD) return origin.add(local);
             return origin.add(basis[0].scale(local.x)).add(basis[1].scale(local.y)).add(basis[2].scale(local.z));
         }
 
         Vec3 localPoint(Vec3 world) {
             Vec3 offset = world.subtract(origin);
+            if (basis == WORLD) return offset;
             return new Vec3(offset.dot(basis[0]), offset.dot(basis[1]), offset.dot(basis[2]));
         }
 
         AABB worldBounds(AABB local) {
+            if (basis == WORLD) return local.move(origin);
             Vec3 center = worldPoint(local.getCenter());
             Vec3 half = halfSize(local);
             Vec3 extent = new Vec3(half.dot(axes.get(0).local), half.dot(axes.get(1).local), half.dot(axes.get(2).local));
@@ -622,6 +672,7 @@ public final class HullCollisions {
         }
 
         AABB localBounds(AABB world) {
+            if (basis == WORLD) return world.move(-origin.x, -origin.y, -origin.z);
             Vec3 center = localPoint(world.getCenter());
             Vec3 half = halfSize(world);
             Vec3 extent = new Vec3(half.dot(axes.get(3).world), half.dot(axes.get(4).world), half.dot(axes.get(5).world));

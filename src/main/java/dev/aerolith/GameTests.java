@@ -58,6 +58,7 @@ final class GameTests {
         add("spawncommandmakesasmanycraftsofthatsize", "aerolith_spawn", 200, false, AerolithGameTests::spawnCommandMakesAsManyCraftsOfThatSize);
         add("boundsofaturnedcrafttouchitscorners", "default", 100, false, AerolithGameTests::boundsOfATurnedCraftTouchItsCorners);
         add("firstimpulsecannotcrossanunclaimedterraintile", "default", 100, false, AerolithGameTests::firstImpulseCannotCrossAnUnclaimedTerrainTile);
+        add("placingaboveaplotsectionupdatesthehullimmediately", "default", 100, false, AerolithGameTests::placingAboveAPlotSectionUpdatesTheHullImmediately);
         add("earlyplotlookuppreservessavedchestbutnotdiscardedchest", "default", 100, false, AerolithGameTests::earlyPlotLookupPreservesSavedChestButNotDiscardedChest);
         add("entityspawningitemsarenotspentonacraft", "default", 100, false, AerolithGameTests::entitySpawningItemsAreNotSpentOnACraft);
         add("everyblockwithashapecanbeaimedatonacraft", "default", 100, false, AerolithGameTests::everyBlockWithAShapeCanBeAimedAtOnACraft);
@@ -72,11 +73,16 @@ final class GameTests {
         add("placementseesbothsidesofacolumnandtrackshullchanges", "default", 100, false, HullCollisionGameTests::placementSeesBothSidesOfAColumnAndTracksHullChanges);
         add("slabsupportsandcarriesitems", "default", 100, false, HullCollisionGameTests::slabSupportsAndCarriesItems);
         add("translatingsidepushesinsteadofpassingthrough", "default", 100, false, HullCollisionGameTests::translatingSidePushesInsteadOfPassingThrough);
+        add("translatinghullpusheseveryentityinacrowd", "default", 100, false, HullCollisionGameTests::translatingHullPushesEveryEntityInACrowd);
         add("playercrouchesandpacketsrespectdeck", "default", 100, false, HullCollisionGameTests::playerCrouchesAndPacketsRespectDeck);
         add("creaturewalksupatilteddeckwithoutslidingback", "default", 100, false, HullCollisionGameTests::creatureWalksUpATiltedDeckWithoutSlidingBack);
         add("creaturewalkingintoahullpushesit", "default", 100, false, HullCollisionGameTests::creatureWalkingIntoAHullPushesIt);
+        add("fastrafpushesplayerswithouttunneling", "default", 100, false, FastRaftCollisionGameTests::fastRaftPushesPlayersWithoutTunneling);
+        add("fastspinningraftbeyondoldstepcappushesplayer", "default", 100, false, FastRaftCollisionGameTests::fastSpinningRaftBeyondOldStepCapPushesPlayer);
+        add("tiltedfastrafpushesgroundedplayerforward", "default", 100, false, FastRaftCollisionGameTests::tiltedFastRaftPushesGroundedPlayerForward);
         add("physicsassemblerblockmakessetsrangeandunmakesacraft", "default", 300, false, PhysicsGameTests::physicsAssemblerBlockMakesSetsRangeAndUnmakesACraft);
         add("boxindexfindsexactlywhatascanfinds", "default", 100, false, PhysicsGameTests::boxIndexFindsExactlyWhatAScanFinds);
+        add("terrainclaimvisitsonlychangedtiles", "default", 100, false, PhysicsGameTests::terrainClaimVisitsOnlyChangedTiles);
         add("raftwithredstoneassemblesanddocksback", "aerolith_redstone", 300, false, PhysicsGameTests::raftWithRedstoneAssemblesAndDocksBack);
         add("redstoneonacraftdoesnotrebuilditshull", "aerolith_redstone", 300, false, PhysicsGameTests::redstoneOnACraftDoesNotRebuildItsHull);
         add("blocksdroppedonaraftneversinkintoit", "default", 900, false, PhysicsGameTests::blocksDroppedOnARaftNeverSinkIntoIt);

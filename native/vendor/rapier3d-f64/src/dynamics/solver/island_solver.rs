@@ -42,6 +42,64 @@ impl IslandSolver {
         joint_indices: &[JointIndex],
         multibodies: &mut MultibodyJointSet,
     ) {
+        self.init_and_solve_mode(
+            island_id,
+            counters,
+            base_params,
+            islands,
+            bodies,
+            manifolds,
+            manifold_indices,
+            impulse_joints,
+            joint_indices,
+            multibodies,
+            false,
+        );
+    }
+
+    #[cfg(feature = "parallel")]
+    pub fn init_and_solve_parallel(
+        &mut self,
+        island_id: usize,
+        counters: &mut Counters,
+        base_params: &IntegrationParameters,
+        islands: &IslandManager,
+        bodies: &mut RigidBodySet,
+        manifolds: &mut [&mut ContactManifold],
+        manifold_indices: &[ContactManifoldIndex],
+        impulse_joints: &mut [JointGraphEdge],
+        joint_indices: &[JointIndex],
+        multibodies: &mut MultibodyJointSet,
+    ) {
+        self.init_and_solve_mode(
+            island_id,
+            counters,
+            base_params,
+            islands,
+            bodies,
+            manifolds,
+            manifold_indices,
+            impulse_joints,
+            joint_indices,
+            multibodies,
+            true,
+        );
+    }
+
+    fn init_and_solve_mode(
+        &mut self,
+        island_id: usize,
+        counters: &mut Counters,
+        base_params: &IntegrationParameters,
+        islands: &IslandManager,
+        bodies: &mut RigidBodySet,
+        manifolds: &mut [&mut ContactManifold],
+        manifold_indices: &[ContactManifoldIndex],
+        impulse_joints: &mut [JointGraphEdge],
+        joint_indices: &[JointIndex],
+        multibodies: &mut MultibodyJointSet,
+        parallel: bool,
+    ) {
         counters.solver.velocity_assembly_time.resume();
         let num_solver_iterations = base_params.num_solver_iterations.get()
             + islands.active_island_additional_solver_iterations(island_id);
@@ -63,30 +121,65 @@ impl IslandSolver {
                 bodies,
                 multibodies,
             );
-        self.velocity_solver.init_constraints(
-            island_id,
-            islands,
-            bodies,
-            multibodies,
-            manifolds,
-            manifold_indices,
-            impulse_joints,
-            joint_indices,
-            &mut self.contact_constraints,
-            &mut self.joint_constraints,
-        );
+        if parallel {
+            #[cfg(feature = "parallel")]
+            {
+                let threads =
+                    rayon::current_num_threads().min(super::parallel_colored::MAX_WORKERS);
+                self.velocity_solver.init_constraints_colored(
+                    island_id,
+                    islands,
+                    bodies,
+                    multibodies,
+                    manifolds,
+                    manifold_indices,
+                    impulse_joints,
+                    joint_indices,
+                    &mut self.contact_constraints,
+                    &mut self.joint_constraints,
+                    threads.max(3),
+                );
+            }
+            #[cfg(not(feature = "parallel"))]
+            let _ = parallel;
+        } else {
+            self.velocity_solver.init_constraints(
+                island_id,
+                islands,
+                bodies,
+                multibodies,
+                manifolds,
+                manifold_indices,
+                impulse_joints,
+                joint_indices,
+                &mut self.contact_constraints,
+                &mut self.joint_constraints,
+            );
+        }
         counters.solver.velocity_assembly_time.pause();
 
         // SOLVE
         counters.solver.velocity_resolution_time.resume();
-        self.velocity_solver.solve_constraints(
-            &params,
-            num_solver_iterations,
-            bodies,
-            multibodies,
-            &mut self.contact_constraints,
-            &mut self.joint_constraints,
-        );
+        if parallel {
+            #[cfg(feature = "parallel")]
+            self.velocity_solver.solve_constraints_parallel(
+                &params,
+                num_solver_iterations,
+                bodies,
+                multibodies,
+                &mut self.contact_constraints,
+                &mut self.joint_constraints,
+            );
+        } else {
+            self.velocity_solver.solve_constraints(
+                &params,
+                num_solver_iterations,
+                bodies,
+                multibodies,
+                &mut self.contact_constraints,
+                &mut self.joint_constraints,
+            );
+        }
         counters.solver.velocity_resolution_time.pause();
 
         // WRITEBACK

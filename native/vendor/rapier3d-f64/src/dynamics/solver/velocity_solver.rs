@@ -1,3 +1,7 @@
+use super::contact_constraint::{ContactPtrs, ImpulseSlot};
+use super::parallel_colored::{
+    RangeIdx, SweepAction, SyncPtr, TeamSync, WorkerPanicGuard, MAX_WORKERS,
+};
 use super::{JointConstraintTypes, SolverConstraintsSet};
 use crate::dynamics::solver::solver_body::SolverBody;
 use crate::dynamics::{
@@ -27,112 +31,200 @@ pub(crate) struct VelocitySolver {
 /// the root of that, and ends in the same impulses.
 #[derive(Default)]
 struct Accelerator {
-    one: Memory<Real>,
-    four: Memory<SimdReal>,
+    one: Vec<ImpulseSlot<Real>>,
+    four: Vec<ImpulseSlot<SimdReal>>,
     vels: Vec<SolverVel<Real>>,
     vel_direction: Vec<SolverVel<Real>>,
 }
 
-#[derive(Default)]
-struct Memory<N> {
-    /// The impulses before the last sweep, and which way they have been going.
-    points: Vec<[[N; 2]; 3]>,
-    at: usize,
-}
-
-impl<N: SimdRealCopy> Memory<N> {
-    fn remember(&mut self, now: [&mut N; 3]) {
-        self.points.push(now.map(|v| [*v, N::zero()]));
-    }
-
-    /// What the last sweep changed, as an energy (impulse times velocity) and as the largest change of velocity.
-    fn changes(&mut self, now: [&mut N; 3], k: [N; 3]) -> (N, N) {
-        let old = &self.points[self.at];
-        self.at += 1;
-        let (mut energy, mut fastest) = (N::zero(), N::zero());
-        for j in 0..3 {
-            let d = *now[j] - old[j][0];
-            let v = d * k[j];
-            energy += d * v;
-            fastest = fastest.simd_max(v.simd_abs());
-        }
-        (energy, fastest)
-    }
-
-    fn advance(&mut self, now: [&mut N; 3], beta: N, keep: N) {
-        for (value, [old, p]) in now.into_iter().zip(&mut self.points[self.at]) {
-            let d = *value - *old;
-            *value += *p * beta;
-            *p = (*p * beta + d) * keep;
-            *old = *value;
-        }
-        self.at += 1;
-    }
-}
-
 impl Accelerator {
     /// Sweeps at least once, and then until a sweep changes the relative velocity at no contact by more than `tolerance`.
-    fn run(
+    fn run<const D: usize>(
         &mut self,
         most: usize,
         tolerance: Real,
         contacts: &mut SolverConstraintsSet<ContactConstraintTypes>,
         vels: &mut [SolverVel<Real>],
-        friction: bool,
     ) {
-        self.one.points.clear();
-        self.four.points.clear();
-        contacts.each_impulse(|now, _| self.one.remember(now), |now, _| self.four.remember(now));
+        let prof = crate::counters::SolverCounters::aerolith_stage_enabled();
+        let mut sweep_ns = 0u64;
+        let t_start = prof.then(std::time::Instant::now);
+        contacts.init_nncg_slots::<D>(&mut self.one, &mut self.four);
+        if prof && D == 3 {
+            crate::counters::SolverCounters::aerolith_add(18, self.one.len() as u64 * 3);
+            crate::counters::SolverCounters::aerolith_add(19, self.four.len() as u64 * 3);
+        }
         self.vels.clear();
         self.vels.extend_from_slice(vels);
         self.vel_direction.clear();
+        let mut has_p = false;
         let mut last = Real::MAX;
+        let mut stiffened_early = 0usize;
         for i in 1..=most {
-            if friction {
-                contacts.sweep(vels);
-            } else {
-                contacts.solve_restitution(vels, &mut DVector::zeros(0));
+            let t_sweep = prof.then(std::time::Instant::now);
+            let (changed, fastest) =
+                contacts.sweep_and_measure::<D>(vels, &mut self.one, &mut self.four, !has_p);
+            if let Some(ts) = t_sweep {
+                sweep_ns += ts.elapsed().as_nanos() as u64;
             }
-            let (mut changed, mut fastest) = (0.0, 0.0 as Real);
-            let (mut wide_changed, mut wide_fastest) = (SimdReal::splat(0.0), SimdReal::splat(0.0));
-            (self.one.at, self.four.at) = (0, 0);
-            contacts.each_impulse(
-                |now, k| {
-                    let (c, f) = self.one.changes(now, k);
-                    changed += c;
-                    fastest = fastest.max(f);
-                },
-                |now, k| {
-                    let (c, f) = self.four.changes(now, k);
-                    wide_changed += c;
-                    wide_fastest = wide_fastest.simd_max(f);
-                },
-            );
-            changed += wide_changed.simd_horizontal_sum();
-            fastest = fastest.max(wide_fastest.simd_horizontal_max());
             if i == most || fastest <= tolerance {
+                if let Some(t0) = t_start {
+                    let total_ns = t0.elapsed().as_nanos() as u64;
+                    if D == 3 {
+                        crate::counters::SolverCounters::aerolith_add(12, 1);
+                        crate::counters::SolverCounters::aerolith_add(13, i as u64);
+                        crate::counters::SolverCounters::aerolith_add(4, total_ns);
+                        crate::counters::SolverCounters::aerolith_add(5, sweep_ns);
+                        crate::counters::SolverCounters::aerolith_add(
+                            6,
+                            total_ns.saturating_sub(sweep_ns),
+                        );
+                    } else {
+                        crate::counters::SolverCounters::aerolith_add(15, 1);
+                        crate::counters::SolverCounters::aerolith_add(16, i as u64);
+                        crate::counters::SolverCounters::aerolith_add(9, total_ns);
+                        crate::counters::SolverCounters::aerolith_add(17, sweep_ns);
+                    }
+                }
                 return;
             }
-            // Fletcher-Reeves; a direction that did not bring less to do is given up.
-            let restart = changed > last;
-            let beta = if restart { 0.0 } else { changed / last };
-            let keep = if restart { 0.0 } else { 1.0 };
-            last = changed;
-            self.vel_direction.resize(vels.len(), SolverVel::zero());
-            (self.one.at, self.four.at) = (0, 0);
-            contacts.each_impulse(
-                |now, _| self.one.advance(now, beta, keep),
-                |now, _| self.four.advance(now, SimdReal::splat(beta), SimdReal::splat(keep)),
-            );
-            for ((v, old), p) in vels.iter_mut().zip(&mut self.vels).zip(&mut self.vel_direction) {
-                let d = *v - *old;
-                v.linear += p.linear * beta;
-                v.angular += p.angular * beta;
-                p.linear = (p.linear * beta + d.linear) * keep;
-                p.angular = (p.angular * beta + d.angular) * keep;
-                *old = *v;
+            let stiff_reset =
+                D == 3 && (i == 6 || i == 16 || i == 32) && stiffened_early < 3 && contacts.stiffen();
+            if stiff_reset {
+                stiffened_early += 1;
+                has_p = false;
+                last = Real::MAX;
+                contacts.advance_nncg::<D>(&mut self.one, &mut self.four, 0.0, true);
+                self.vels.copy_from_slice(vels);
+                continue;
+            }
+            if !has_p {
+                // `sweep_and_measure` already initialized `slot.p = d` and `slot.old = now`.
+                has_p = true;
+                last = changed;
+                self.init_vel_direction(vels);
+            } else if changed > last {
+                has_p = false;
+                last = changed;
+                // Sync `slot.old = now` so next sweep sees `d = imp_{i+1} - imp_i`.
+                contacts.advance_nncg::<D>(&mut self.one, &mut self.four, 0.0, true);
+                self.vels.copy_from_slice(vels);
+            } else {
+                let beta = changed / last;
+                last = changed;
+                contacts.advance_nncg::<D>(&mut self.one, &mut self.four, beta, false);
+                self.advance_vel_direction(vels, beta);
             }
         }
+    }
+
+    #[inline(always)]
+    fn init_vel_direction(&mut self, vels: &[SolverVel<Real>]) {
+        if self.vel_direction.len() != vels.len() {
+            self.vel_direction.resize(vels.len(), SolverVel::zero());
+        }
+        for ((v, old), p) in vels.iter().zip(&mut self.vels).zip(&mut self.vel_direction) {
+            *p = *v - *old;
+            *old = *v;
+        }
+    }
+
+    #[inline(always)]
+    fn advance_vel_direction(&mut self, vels: &mut [SolverVel<Real>], beta: Real) {
+        for ((v, old), p) in vels.iter_mut().zip(&mut self.vels).zip(&mut self.vel_direction) {
+            let d = *v - *old;
+            v.linear += p.linear * beta;
+            v.angular += p.angular * beta;
+            p.linear = p.linear * beta + d.linear;
+            p.angular = p.angular * beta + d.angular;
+            *old = *v;
+        }
+    }
+}
+
+struct ParallelAccelCtx<'a> {
+    cptrs: ContactPtrs,
+    plan: &'a super::parallel_colored::ColoredPlan,
+    one_two: SyncPtr<ImpulseSlot<Real>>,
+    one_one: SyncPtr<ImpulseSlot<Real>>,
+    #[cfg(feature = "simd-is-enabled")]
+    four_two: SyncPtr<ImpulseSlot<SimdReal>>,
+    #[cfg(feature = "simd-is-enabled")]
+    four_one: SyncPtr<ImpulseSlot<SimdReal>>,
+}
+
+struct ParallelCoordState {
+    vels: SyncPtr<SolverVel<Real>>,
+    vels_incr: SyncPtr<SolverVel<Real>>,
+    vels_len: usize,
+    bodies: SyncPtr<SolverBody>,
+    accel_vels: SyncPtr<SolverVel<Real>>,
+    accel_vel_dir: SyncPtr<SolverVel<Real>>,
+    has_p: bool,
+    last: Real,
+    stiffened_early: usize,
+    restarts: usize,
+    run_start: Option<std::time::Instant>,
+}
+
+impl ParallelCoordState {
+    #[inline(always)]
+    unsafe fn vels_mut(&self) -> &mut [SolverVel<Real>] {
+        self.vels.slice_mut(0..self.vels_len)
+    }
+
+    #[inline(always)]
+    unsafe fn init_vel_direction(&self) {
+        let vels = self.vels_mut();
+        let old = self.accel_vels.slice_mut(0..self.vels_len);
+        let dir = self.accel_vel_dir.slice_mut(0..self.vels_len);
+        for ((v, o), p) in vels.iter().zip(old.iter_mut()).zip(dir.iter_mut()) {
+            *p = *v - *o;
+            *o = *v;
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn advance_vel_direction(&self, beta: Real) {
+        let vels = self.vels_mut();
+        let old = self.accel_vels.slice_mut(0..self.vels_len);
+        let dir = self.accel_vel_dir.slice_mut(0..self.vels_len);
+        for ((v, o), p) in vels.iter_mut().zip(old.iter_mut()).zip(dir.iter_mut()) {
+            let d = *v - *o;
+            v.linear += p.linear * beta;
+            v.angular += p.angular * beta;
+            p.linear = p.linear * beta + d.linear;
+            p.angular = p.angular * beta + d.angular;
+            *o = *v;
+        }
+    }
+}
+
+#[inline(always)]
+fn zero_slot<N: SimdRealCopy>() -> ImpulseSlot<N> {
+    let z = N::zero();
+    ImpulseSlot {
+        old: [z; 3],
+        p: [z; 3],
+        k: [z; 3],
+    }
+}
+
+fn integrate_body_slice(
+    dt: Real,
+    solver_vels: &[SolverVel<Real>],
+    solver_bodies: &mut [SolverBody],
+) {
+    for (solver_vels, solver_body) in solver_vels.iter().zip(solver_bodies.iter_mut()) {
+        let linvel = solver_vels.linear;
+        let angvel = solver_body.sqrt_ii.transform_vector(solver_vels.angular);
+
+        let mut new_vels = RigidBodyVelocity { linvel, angvel };
+        new_vels = new_vels.apply_damping(dt, &solver_body.damping);
+        let new_pos = new_vels.integrate(dt, &solver_body.position, &solver_body.local_com);
+        solver_body.integrated_vels += new_vels;
+        solver_body.position = new_pos;
+        solver_body.world_com = new_pos * solver_body.local_com;
     }
 }
 
@@ -149,6 +241,45 @@ impl VelocitySolver {
         }
     }
 
+    pub fn init_constraints_colored(
+        &self,
+        island_id: usize,
+        islands: &IslandManager,
+        bodies: &mut RigidBodySet,
+        multibodies: &mut MultibodyJointSet,
+        manifolds_all: &mut [&mut ContactManifold],
+        manifold_indices: &[ContactManifoldIndex],
+        joints_all: &mut [JointGraphEdge],
+        joint_indices: &[JointIndex],
+        contact_constraints: &mut SolverConstraintsSet<ContactConstraintTypes>,
+        joint_constraints: &mut SolverConstraintsSet<JointConstraintTypes>,
+        min_par_constraints: usize,
+    ) {
+        let t0 = crate::counters::SolverCounters::aerolith_stage_enabled()
+            .then(std::time::Instant::now);
+        contact_constraints.init_colored(
+            island_id,
+            islands,
+            bodies,
+            multibodies,
+            manifolds_all,
+            manifold_indices,
+            min_par_constraints,
+        );
+
+        joint_constraints.init(
+            island_id,
+            islands,
+            bodies,
+            multibodies,
+            joints_all,
+            joint_indices,
+        );
+        if let Some(t0) = t0 {
+            crate::counters::SolverCounters::aerolith_add(0, t0.elapsed().as_nanos() as u64);
+        }
+    }
+
     pub fn init_constraints(
         &self,
         island_id: usize,
@@ -162,6 +293,8 @@ impl VelocitySolver {
         contact_constraints: &mut SolverConstraintsSet<ContactConstraintTypes>,
         joint_constraints: &mut SolverConstraintsSet<JointConstraintTypes>,
     ) {
+        let t0 = crate::counters::SolverCounters::aerolith_stage_enabled()
+            .then(std::time::Instant::now);
         contact_constraints.init(
             island_id,
             islands,
@@ -179,6 +312,9 @@ impl VelocitySolver {
             joints_all,
             joint_indices,
         );
+        if let Some(t0) = t0 {
+            crate::counters::SolverCounters::aerolith_add(0, t0.elapsed().as_nanos() as u64);
+        }
     }
 
     pub fn init_solver_velocities_and_solver_bodies(
@@ -267,6 +403,217 @@ impl VelocitySolver {
     }
 
     #[profiling::function]
+    pub fn solve_constraints_parallel(
+        &mut self,
+        params: &IntegrationParameters,
+        num_substeps: usize,
+        bodies: &mut RigidBodySet,
+        multibodies: &mut MultibodyJointSet,
+        contact_constraints: &mut SolverConstraintsSet<ContactConstraintTypes>,
+        joint_constraints: &mut SolverConstraintsSet<JointConstraintTypes>,
+    ) {
+        let no_joints = joint_constraints.two_body_interactions.is_empty()
+            && joint_constraints.one_body_interactions.is_empty()
+            && joint_constraints.generic_two_body_interactions.is_empty()
+            && joint_constraints.generic_one_body_interactions.is_empty();
+        let force_one = std::env::var_os("AEROLITH_FORCE_PAR1").is_some();
+        let threads = if force_one {
+            1
+        } else {
+            rayon::current_num_threads().min(MAX_WORKERS)
+        };
+        if (threads < 2 && !force_one)
+            || !self.multibody_roots.is_empty()
+            || !no_joints
+            || !contact_constraints.can_run_parallel()
+        {
+            return self.solve_constraints(
+                params,
+                num_substeps,
+                bodies,
+                multibodies,
+                contact_constraints,
+                joint_constraints,
+            );
+        }
+
+        let one_split = *contact_constraints.color_plan.two_scalar_slots.last().unwrap_or(&0) as usize;
+        let one_total =
+            one_split + *contact_constraints.color_plan.one_scalar_slots.last().unwrap_or(&0) as usize;
+        self.accelerator.one.resize(one_total, zero_slot());
+        #[cfg(feature = "simd-is-enabled")]
+        let (four_split, four_total) = {
+            let s = *contact_constraints.color_plan.two_simd_slots.last().unwrap_or(&0) as usize;
+            let t = s + *contact_constraints.color_plan.one_simd_slots.last().unwrap_or(&0) as usize;
+            self.accelerator.four.resize(t, zero_slot());
+            (s, t)
+        };
+        #[cfg(feature = "simd-is-enabled")]
+        let _ = four_total;
+
+        let vels_len = self.solver_vels.len();
+        self.accelerator.vels.resize(vels_len, SolverVel::zero());
+        self.accelerator.vel_direction.resize(vels_len, SolverVel::zero());
+
+        let cptrs = contact_constraints.ptrs();
+        let plan = &contact_constraints.color_plan;
+        let (one_two_slice, one_one_slice) = self.accelerator.one.split_at_mut(one_split);
+        let one_two = SyncPtr::from_slice(one_two_slice);
+        let one_one = SyncPtr::from_slice(one_one_slice);
+        #[cfg(feature = "simd-is-enabled")]
+        let (four_two, four_one) = {
+            let (a, b) = self.accelerator.four.split_at_mut(four_split);
+            (SyncPtr::from_slice(a), SyncPtr::from_slice(b))
+        };
+        let actx = ParallelAccelCtx {
+            cptrs,
+            plan,
+            one_two,
+            one_one,
+            #[cfg(feature = "simd-is-enabled")]
+            four_two,
+            #[cfg(feature = "simd-is-enabled")]
+            four_one,
+        };
+        let coord = ParallelCoordState {
+            vels: SyncPtr::from_slice(&mut self.solver_vels),
+            vels_incr: SyncPtr::from_slice(&mut self.solver_vels_increment),
+            vels_len,
+            bodies: SyncPtr::from_slice(&mut self.solver_bodies),
+            accel_vels: SyncPtr::from_slice(&mut self.accelerator.vels),
+            accel_vel_dir: SyncPtr::from_slice(&mut self.accelerator.vel_direction),
+            has_p: false,
+            last: Real::MAX,
+            stiffened_early: 0,
+            restarts: 0,
+            run_start: None,
+        };
+        let sync = TeamSync::new(threads, coord);
+        let empty_multibodies = MultibodyJointSet::new();
+        let prof = crate::counters::SolverCounters::aerolith_stage_enabled();
+        let most = params.max_internal_iterations;
+        let tol = params.internal_velocity_tolerance;
+
+        let run_worker = |tid: usize| {
+            let _guard = WorkerPanicGuard(&sync);
+            let mut gen = 0usize;
+            let num_par = plan.parallel_colors.len();
+
+            for substep_id in 0..num_substeps {
+                let is_last_substep = substep_id + 1 == num_substeps;
+
+                // Update constraints across threads (reads solver_bodies only); last arrival adds solver_vels_increment.
+                unsafe {
+                    let sb = std::slice::from_raw_parts(
+                        sync.read_shared().state.bodies.as_ptr(),
+                        sync.read_shared().state.vels_len,
+                    );
+                    cptrs.update_slice(params, substep_id, &empty_multibodies, sb, tid, threads);
+                }
+                sync.barrier_with(&mut gen, |shared, _| {
+                    unsafe {
+                        let s = &shared.state;
+                        let vels = s.vels.slice_mut(0..s.vels_len);
+                        let incr = s.vels_incr.slice_mut(0..s.vels_len);
+                        for (v, i) in vels.iter_mut().zip(incr.iter()) {
+                            v.linear += i.linear;
+                            v.angular += i.angular;
+                        }
+                    }
+                    shared.stiffen_more = false;
+                });
+
+                if params.warmstart_coefficient != 0.0 {
+                    let vptr = sync.read_shared().state.vels;
+                    for c_idx in 0..num_par {
+                        unsafe {
+                            cptrs.warmstart_color(plan.parallel_colors[c_idx], tid, threads, c_idx, vptr);
+                        }
+                        if c_idx + 1 < num_par {
+                            sync.barrier(&mut gen);
+                        }
+                    }
+                    sync.barrier_with(&mut gen, |shared, _| unsafe {
+                        cptrs.warmstart_color(plan.tail, 0, 1, 0, shared.state.vels);
+                    });
+                }
+
+                for _pass in 0..4 {
+                    unsafe {
+                        run_accel_parallel::<3>(
+                            &sync,
+                            &actx,
+                            tid,
+                            threads,
+                            most,
+                            tol,
+                            true,
+                            prof,
+                            &mut gen,
+                        );
+                    }
+                    if !sync.read_shared().stiffen_more {
+                        break;
+                    }
+                }
+
+                if is_last_substep && params.num_additional_friction_iterations > 0 {
+                    for _ in 0..params.num_additional_friction_iterations {
+                        run_friction_parallel(&sync, &actx, tid, threads, &mut gen);
+                    }
+                }
+
+                // Integrate positions and remove bias concurrently on disjoint worker slices.
+                let r_b = RangeIdx { start: 0, end: vels_len }.worker_slice(tid, threads, 0);
+                unsafe {
+                    let s = &sync.read_shared().state;
+                    let v_slice = s.vels.slice_mut(r_b.clone());
+                    let b_slice = s.bodies.slice_mut(r_b);
+                    integrate_body_slice(params.dt, v_slice, b_slice);
+                }
+                if params.num_internal_stabilization_iterations > 0 {
+                    unsafe {
+                        cptrs.remove_bias_slice(tid, threads);
+                    }
+                }
+                sync.barrier(&mut gen);
+
+                if params.num_internal_stabilization_iterations > 0 {
+                    unsafe {
+                        run_accel_parallel::<1>(
+                            &sync,
+                            &actx,
+                            tid,
+                            threads,
+                            most,
+                            tol,
+                            false,
+                            prof,
+                            &mut gen,
+                        );
+                    }
+                    run_friction_parallel(&sync, &actx, tid, threads, &mut gen);
+                }
+            }
+        };
+
+        if threads == 1 {
+            run_worker(0);
+        } else {
+            rayon::scope(|s| {
+                for tid in 1..threads {
+                    s.spawn(move |_| {
+                        enable_flush_to_zero!();
+                        run_worker(tid);
+                    });
+                }
+                enable_flush_to_zero!();
+                run_worker(0);
+            });
+        }
+    }
+
+    #[profiling::function]
     pub fn solve_constraints(
         &mut self,
         params: &IntegrationParameters,
@@ -278,6 +625,7 @@ impl VelocitySolver {
     ) {
         for substep_id in 0..num_substeps {
             let is_last_substep = substep_id == num_substeps - 1;
+            let prof = crate::counters::SolverCounters::aerolith_stage_enabled();
 
             for (solver_vels, incr) in self
                 .solver_vels
@@ -293,26 +641,42 @@ impl VelocitySolver {
             /*
              * Update & solve constraints.
              */
+            let t0 = prof.then(std::time::Instant::now);
             joint_constraints.update(params, multibodies, &self.solver_bodies);
             contact_constraints.update(params, substep_id, multibodies, &self.solver_bodies);
+            if let Some(t) = t0 {
+                crate::counters::SolverCounters::aerolith_add(2, t.elapsed().as_nanos() as u64);
+            }
 
+            let t0 = prof.then(std::time::Instant::now);
             if params.warmstart_coefficient != 0.0 {
                 contact_constraints.warmstart(&mut self.solver_vels, &mut self.generic_solver_vels);
+            }
+            if let Some(t) = t0 {
+                crate::counters::SolverCounters::aerolith_add(3, t.elapsed().as_nanos() as u64);
             }
 
             for _ in 0..params.num_internal_pgs_iterations {
                 joint_constraints.solve(&mut self.solver_vels, &mut self.generic_solver_vels);
             }
             for _ in 0..4 {
-                self.accelerator.run(
+                self.accelerator.run::<3>(
                     params.max_internal_iterations,
                     params.internal_velocity_tolerance,
                     contact_constraints,
                     &mut self.solver_vels,
-                    true,
                 );
                 // An impact is carried by contacts that had nothing to carry before.
-                if !contact_constraints.stiffen() {
+                let ts = prof.then(std::time::Instant::now);
+                let more = contact_constraints.stiffen();
+                if let Some(ts) = ts {
+                    crate::counters::SolverCounters::aerolith_add(
+                        7,
+                        ts.elapsed().as_nanos() as u64,
+                    );
+                    crate::counters::SolverCounters::aerolith_add(14, 1);
+                }
+                if !more {
                     break;
                 }
             }
@@ -327,7 +691,11 @@ impl VelocitySolver {
             /*
              * Integrate positions.
              */
+            let t0 = prof.then(std::time::Instant::now);
             self.integrate_positions(params, is_last_substep, bodies, multibodies);
+            if let Some(t) = t0 {
+                crate::counters::SolverCounters::aerolith_add(8, t.elapsed().as_nanos() as u64);
+            }
 
             /*
              * Resolution without bias.
@@ -338,16 +706,23 @@ impl VelocitySolver {
                         .solve_wo_bias(&mut self.solver_vels, &mut self.generic_solver_vels);
                 }
                 contact_constraints.remove_bias();
-                self.accelerator.run(
+                // The unbiased sweeps solve the normal impulse only; friction is handled below.
+                self.accelerator.run::<1>(
                     params.max_internal_iterations,
                     params.internal_velocity_tolerance,
                     contact_constraints,
                     &mut self.solver_vels,
-                    false,
                 );
 
+                let t0 = prof.then(std::time::Instant::now);
                 contact_constraints
                     .solve_friction(&mut self.solver_vels, &mut self.generic_solver_vels);
+                if let Some(t) = t0 {
+                    crate::counters::SolverCounters::aerolith_add(
+                        10,
+                        t.elapsed().as_nanos() as u64,
+                    );
+                }
             }
         }
     }
@@ -360,20 +735,7 @@ impl VelocitySolver {
         bodies: &mut RigidBodySet,
         multibodies: &mut MultibodyJointSet,
     ) {
-        // Integrate positions.
-        for (solver_vels, solver_body) in self.solver_vels.iter().zip(self.solver_bodies.iter_mut())
-        {
-            let linvel = solver_vels.linear;
-            let angvel = solver_body.sqrt_ii.transform_vector(solver_vels.angular);
-
-            let mut new_vels = RigidBodyVelocity { linvel, angvel };
-            new_vels = new_vels.apply_damping(params.dt, &solver_body.damping);
-            let new_pos =
-                new_vels.integrate(params.dt, &solver_body.position, &solver_body.local_com);
-            solver_body.integrated_vels += new_vels;
-            solver_body.position = new_pos;
-            solver_body.world_com = new_pos * solver_body.local_com;
-        }
+        integrate_body_slice(params.dt, &self.solver_vels, &mut self.solver_bodies);
 
         // Integrate multibody positions.
         for link in &self.multibody_roots {
@@ -456,4 +818,295 @@ impl VelocitySolver {
             }
         }
     }
+}
+
+fn run_friction_parallel(
+    sync: &TeamSync<ParallelCoordState>,
+    actx: &ParallelAccelCtx<'_>,
+    tid: usize,
+    threads: usize,
+    gen: &mut usize,
+) {
+    let plan = actx.plan;
+    let num_par = plan.parallel_colors.len();
+    let vptr = sync.read_shared().state.vels;
+    for c_idx in 0..num_par {
+        unsafe {
+            actx.cptrs
+                .solve_friction_color(plan.parallel_colors[c_idx], tid, threads, c_idx, vptr);
+        }
+        if c_idx + 1 < num_par {
+            sync.barrier(gen);
+        }
+    }
+    sync.barrier_with(gen, |shared, _| unsafe {
+        actx.cptrs.solve_friction_color(plan.tail, 0, 1, 0, shared.state.vels);
+    });
+}
+
+unsafe fn run_accel_parallel<const D: usize>(
+    sync: &TeamSync<ParallelCoordState>,
+    actx: &ParallelAccelCtx<'_>,
+    tid: usize,
+    threads: usize,
+    most: usize,
+    tol: Real,
+    do_stiffen: bool,
+    prof: bool,
+    gen: &mut usize,
+) {
+    let plan = actx.plan;
+    let num_par = plan.parallel_colors.len();
+    #[cfg(feature = "simd-is-enabled")]
+    actx.cptrs.init_nncg_slots_slice::<D>(
+        plan,
+        actx.one_two,
+        actx.one_one,
+        actx.four_two,
+        actx.four_one,
+        tid,
+        threads,
+    );
+    #[cfg(not(feature = "simd-is-enabled"))]
+    actx.cptrs.init_nncg_slots_slice::<D>(plan, actx.one_two, actx.one_one, tid, threads);
+
+    sync.barrier_with(gen, |shared, _| {
+        let s = &mut shared.state;
+        s.has_p = false;
+        s.last = Real::MAX;
+        s.stiffened_early = 0;
+        s.restarts = 0;
+        s.run_start = prof.then(std::time::Instant::now);
+        let vels = s.vels.slice_mut(0..s.vels_len);
+        s.accel_vels.slice_mut(0..s.vels_len).copy_from_slice(vels);
+        shared.sweep_action = SweepAction::Continue {
+            beta: 0.0,
+            restart: false,
+            init_p: true,
+        };
+    });
+
+    for iter in 1..=most {
+        let action = sync.read_shared().sweep_action;
+        let (beta, restart, init_p) = match action {
+            SweepAction::Done => return,
+            SweepAction::Continue { beta, restart, init_p } => (beta, restart, init_p),
+        };
+
+        if iter > 1 && (beta != 0.0 || restart) {
+            for (c_idx, &group) in plan.parallel_colors.iter().enumerate() {
+                #[cfg(feature = "simd-is-enabled")]
+                actx.cptrs.advance_color::<D>(
+                    plan,
+                    group,
+                    actx.one_two,
+                    actx.one_one,
+                    actx.four_two,
+                    actx.four_one,
+                    tid,
+                    threads,
+                    c_idx,
+                    beta,
+                    restart,
+                );
+                #[cfg(not(feature = "simd-is-enabled"))]
+                actx.cptrs.advance_color::<D>(
+                    plan,
+                    group,
+                    actx.one_two,
+                    actx.one_one,
+                    tid,
+                    threads,
+                    c_idx,
+                    beta,
+                    restart,
+                );
+            }
+        }
+
+        let vptr = sync.read_shared().state.vels;
+        let (mut local_c, mut local_f) = (0.0, 0.0 as Real);
+        let tw = prof.then(std::time::Instant::now);
+        for (c_idx, &group) in plan.parallel_colors.iter().enumerate() {
+            #[cfg(feature = "simd-is-enabled")]
+            let (cc, ff) = actx.cptrs.sweep_color::<D>(
+                plan,
+                group,
+                actx.one_two,
+                actx.one_one,
+                actx.four_two,
+                actx.four_one,
+                tid,
+                threads,
+                c_idx,
+                vptr,
+                init_p,
+            );
+            #[cfg(not(feature = "simd-is-enabled"))]
+            let (cc, ff) = actx.cptrs.sweep_color::<D>(
+                plan,
+                group,
+                actx.one_two,
+                actx.one_one,
+                tid,
+                threads,
+                c_idx,
+                vptr,
+                init_p,
+            );
+            local_c += cc;
+            local_f = local_f.max(ff);
+            if c_idx + 1 < num_par {
+                sync.barrier(gen);
+            }
+        }
+        if tid == 0 {
+            if let Some(t) = tw {
+                crate::counters::SolverCounters::aerolith_add(6, t.elapsed().as_nanos() as u64);
+            }
+        }
+
+        sync.set_partial(tid, local_c, local_f);
+        sync.barrier_with(gen, |shared, partials| {
+            #[cfg(feature = "simd-is-enabled")]
+            let (mut changed, mut fastest) = actx.cptrs.sweep_color::<D>(
+                plan,
+                plan.tail,
+                actx.one_two,
+                actx.one_one,
+                actx.four_two,
+                actx.four_one,
+                0,
+                1,
+                0,
+                shared.state.vels,
+                init_p,
+            );
+            #[cfg(not(feature = "simd-is-enabled"))]
+            let (mut changed, mut fastest) = actx.cptrs.sweep_color::<D>(
+                plan,
+                plan.tail,
+                actx.one_two,
+                actx.one_one,
+                0,
+                1,
+                0,
+                shared.state.vels,
+                init_p,
+            );
+            for p in partials {
+                changed += p.changed;
+                fastest = fastest.max(p.fastest);
+            }
+
+            let s = &mut shared.state;
+            if iter == most || fastest <= tol {
+                if let Some(t0) = s.run_start {
+                    let ns = t0.elapsed().as_nanos() as u64;
+                    if D == 3 {
+                        crate::counters::SolverCounters::aerolith_add(12, 1);
+                        crate::counters::SolverCounters::aerolith_add(13, iter as u64);
+                        crate::counters::SolverCounters::aerolith_add(4, ns);
+                        crate::counters::SolverCounters::aerolith_add(5, ns);
+                    } else {
+                        crate::counters::SolverCounters::aerolith_add(15, 1);
+                        crate::counters::SolverCounters::aerolith_add(16, iter as u64);
+                        crate::counters::SolverCounters::aerolith_add(9, ns);
+                        crate::counters::SolverCounters::aerolith_add(17, ns);
+                    }
+                }
+                if do_stiffen {
+                    shared.stiffen_more = actx.cptrs.stiffen_all();
+                }
+                shared.sweep_action = SweepAction::Done;
+                return;
+            }
+
+            let stiff_reset = D == 3
+                && (iter == 6 || iter == 16 || iter == 32)
+                && s.stiffened_early < 3
+                && actx.cptrs.stiffen_all();
+            if stiff_reset {
+                s.stiffened_early += 1;
+                s.has_p = false;
+                s.last = Real::MAX;
+                let vels = s.vels_mut();
+                s.accel_vels.slice_mut(0..s.vels_len).copy_from_slice(vels);
+                adv_tail::<D>(actx, 0.0, true);
+                shared.sweep_action = SweepAction::Continue {
+                    beta: 0.0,
+                    restart: true,
+                    init_p: true,
+                };
+                return;
+            }
+
+            if !s.has_p {
+                s.has_p = true;
+                s.last = changed;
+                s.init_vel_direction();
+                shared.sweep_action = SweepAction::Continue {
+                    beta: 0.0,
+                    restart: false,
+                    init_p: false,
+                };
+            } else if changed > s.last {
+                s.restarts += 1;
+                s.has_p = false;
+                s.last = changed;
+                let vels = s.vels_mut();
+                s.accel_vels.slice_mut(0..s.vels_len).copy_from_slice(vels);
+                adv_tail::<D>(actx, 0.0, true);
+                shared.sweep_action = SweepAction::Continue {
+                    beta: 0.0,
+                    restart: true,
+                    init_p: true,
+                };
+            } else {
+                let beta = changed / s.last;
+                s.last = changed;
+                s.advance_vel_direction(beta);
+                adv_tail::<D>(actx, beta, false);
+                shared.sweep_action = SweepAction::Continue {
+                    beta,
+                    restart: false,
+                    init_p: false,
+                };
+            }
+        });
+
+        if matches!(sync.read_shared().sweep_action, SweepAction::Done) {
+            return;
+        }
+    }
+}
+
+#[inline(always)]
+unsafe fn adv_tail<const D: usize>(actx: &ParallelAccelCtx<'_>, beta: Real, restart: bool) {
+    #[cfg(feature = "simd-is-enabled")]
+    actx.cptrs.advance_color::<D>(
+        actx.plan,
+        actx.plan.tail,
+        actx.one_two,
+        actx.one_one,
+        actx.four_two,
+        actx.four_one,
+        0,
+        1,
+        0,
+        beta,
+        restart,
+    );
+    #[cfg(not(feature = "simd-is-enabled"))]
+    actx.cptrs.advance_color::<D>(
+        actx.plan,
+        actx.plan.tail,
+        actx.one_two,
+        actx.one_one,
+        0,
+        1,
+        0,
+        beta,
+        restart,
+    );
 }

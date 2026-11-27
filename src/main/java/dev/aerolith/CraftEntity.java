@@ -79,6 +79,7 @@ public final class CraftEntity extends Entity {
     private final Quaternionf viewRotation = new Quaternionf();
     private Hull hull;
     private CraftSections sections;
+    private HullCollisions.Pose collisionPose;
     private UUID owner;
 
     // The blocks live in the plot dimension. This is a copy of what is there, offset -> state, kept current from block
@@ -209,6 +210,7 @@ public final class CraftEntity extends Entity {
             hull = new Hull(blocks, cellBlocks(true));
         }
         reapplyPosition();
+        if (sections != null) sections.update(this);
     }
 
     // ---- server: starting, changes, saving
@@ -432,10 +434,8 @@ public final class CraftEntity extends Entity {
     @Override
     public void onAddedToLevel() {
         super.onAddedToLevel();
-        if (level() instanceof ServerLevel server) {
-            sections = WorldPhysics.of(server).sections;
-            sections.update(this);
-        }
+        sections = HullCollisions.sections(level());
+        sections.update(this);
         if (!level().isClientSide() && plotId >= 0) {
             ServerLevel plot = plotLevel();
             if (plot != null) {
@@ -535,6 +535,12 @@ public final class CraftEntity extends Entity {
                 : new Quaternionf(entityData.get(ROTATION));
     }
 
+    HullCollisions.Pose collisionPose() {
+        Quaternionfc rotation = level().isClientSide() ? orientation(1) : entityData.get(ROTATION);
+        collisionPose = collisionPose == null ? new HullCollisions.Pose(position(), rotation) : collisionPose.at(position(), rotation);
+        return collisionPose;
+    }
+
     boolean canEdit(Player player) {
         return player.getUUID().equals(owner) || player.permissions().hasPermission(net.minecraft.server.permissions.Permissions.COMMANDS_GAMEMASTER);
     }
@@ -559,14 +565,18 @@ public final class CraftEntity extends Entity {
             } else {
                 applyAim();
             }
-            Vec3 prior = position();
+            Vec3 prior = oldPosition();
             previousRotation.set(viewRotation);
             Quaternionfc target = entityData.get(ROTATION);
-            if (isInterpolating()) {
+            if (isInterpolating() || !prior.equals(position())) {
                 // Position and rotation chase the server pose with one step, or a hull whose origin is far from its
                 // mass would show a visible gap between where it turns and where it is.
                 viewRotation.set(target);
-                getInterpolation().interpolate();
+                if (isInterpolating()) {
+                    getInterpolation().interpolate();
+                } else {
+                    reapplyPosition();
+                }
             } else if (!viewRotation.equals(target, 1.0e-6f)) {
                 viewRotation.slerp(target, 0.5f);
                 reapplyPosition();

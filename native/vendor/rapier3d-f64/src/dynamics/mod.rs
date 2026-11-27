@@ -10,7 +10,7 @@ pub use self::joint::*;
 pub use self::rigid_body_components::*;
 pub(crate) use self::rigid_body_set::ModifiedRigidBodies;
 // #[cfg(not(feature = "parallel"))]
-pub(crate) use self::solver::IslandSolver;
+pub(crate) use self::solver::{IntraIslandGuard, IslandSolver, INTRA_ISLAND_MIN_MANIFOLDS};
 // #[cfg(feature = "parallel")]
 // pub(crate) use self::solver::ParallelIslandSolver;
 pub use parry::mass_properties::MassProperties;

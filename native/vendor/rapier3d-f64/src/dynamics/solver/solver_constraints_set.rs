@@ -1,4 +1,4 @@
-use super::InteractionGroups;
+use super::{parallel_colored::ColoredPlan, InteractionGroups};
 use crate::math::Real;
 use na::DVector;
 
@@ -43,6 +43,7 @@ pub(crate) struct SolverConstraintsSet<Constraints: ConstraintTypes> {
     pub one_body_interactions: Vec<usize>,
     pub generic_two_body_interactions: Vec<usize>,
     pub generic_one_body_interactions: Vec<usize>,
+    pub(crate) color_plan: ColoredPlan,
     pub interaction_groups: InteractionGroups,
     pub one_body_interaction_groups: InteractionGroups,
 
@@ -73,6 +74,7 @@ impl<Constraints: ConstraintTypes> SolverConstraintsSet<Constraints> {
             one_body_interactions: vec![],
             generic_two_body_interactions: vec![],
             generic_one_body_interactions: vec![],
+            color_plan: ColoredPlan::default(),
             interaction_groups: InteractionGroups::new(),
             one_body_interaction_groups: InteractionGroups::new(),
 

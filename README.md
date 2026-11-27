@@ -95,7 +95,7 @@ overrides = ["minecraft:packed_ice=0.015", "minecraft:oak_planks=0.82"]
 - **People, mobs and drops:** obstacles are tested against the rotated shapes of the hull. You can stand on a deck and walk through real openings. The weight of a standing player or mob, and the reaction to their step, are applied to the hull at the support point. A dropped item is carried by the deck but puts no such load on it. At very sharp turns the carrying between ticks stays approximate.
 - **Air:** pressure grows with the square of the relative speed. Covered faces and covered parts of faces get no external force. This is a flat-plate drag model, not a simulation of air vortices.
 - **Water:** the engine intersects the rotated colliders with the filled part of the water cells. The volume and centre of the intersection give the buoyancy force `rho*g*V` and its moment. For a rotating box the drag is computed at several points of the submerged part, so water also brakes rotation about a fixed centre. Level and current come from Minecraft; this is an approximate drag model without waves or filling of cavities.
-- **Integration:** a game tick is `0.05 s`. For fast collisions, loads and water the engine uses four substeps of `0.0125 s`. If all active bodies move slowly on dry support with no extra load, the solver may take a single contact step. Sleeping bodies wake from a push, wind, or a change of support or water. An unloaded area and `/tick freeze` pause the simulation. Safety limits are `80 m/s` for the centre of mass and for any point of the hull, and `30 rad/s`: a large hull rotates slower so its edge does not exceed 80 m/s. With 128 or more active bodies the work is split across cores, leaving one for the game.
+- **Integration:** a game tick is `0.05 s`. For fast collisions, loads and water the engine uses four substeps of `0.0125 s`. If all active bodies move slowly on dry support with no extra load, the solver may take a single contact step. Sleeping bodies wake from a push, wind, or a change of support or water. An unloaded area and `/tick freeze` pause the simulation. Safety limits are `80 m/s` for the centre of mass and for any point of the hull, and `30 rad/s`: a large hull rotates slower so its edge does not exceed 80 m/s. With 48 or more active bodies the work is split across up to eight cores, leaving one for the game. A large group of touching bodies is solved by several threads at once: contacts that share no body run in parallel, and the solver stops at the same tolerance as on one thread.
 
 ## Craft blocks are real blocks
 
@@ -128,6 +128,13 @@ On an empty flat area **in a test world** take a baseline: run `/aerolith perf r
 - `/aerolithperf` measures the CPU time of preparing the crafts for drawing, not FPS and not GPU time. It prints and resets only client-side measurements.
 - `AEROLITH_BENCH=1 ./gradlew runGameTestServer` runs four scenarios without a client, including one 60×60 raft. The results are in the server log. `AEROLITH_PROFILE=1` at server start enables detailed Rust engine timings on stderr; leave it off when comparing ordinary performance.
 - To measure the Rust side alone: `cargo test --release --locked --manifest-path native/Cargo.toml bench_rafts -- --ignored --nocapture`.
+- For dense active contacts between one-block rafts, compile `tools/CubeRaftsBench.java` against the mod JAR and run it with JDK 25:
+  ```sh
+  jar=build/libs/aerolith-0.4.4.jar
+  javac -proc:none -cp "$jar" -d build/cube-bench tools/CubeRaftsBench.java
+  java --enable-native-access=ALL-UNNAMED -cp "build/cube-bench:$jar" dev.aerolith.CubeRaftsBench 80 128 256 512
+  ```
+  This measures the native step, not the whole Minecraft tick. On Windows, use `;` instead of `:` in the classpath.
 
 ### Comparison with Sable
 

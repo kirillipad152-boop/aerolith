@@ -29,6 +29,7 @@ import net.minecraft.world.level.block.entity.FurnaceBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.SlabType;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.common.util.FakePlayer;
@@ -215,6 +216,35 @@ public final class AerolithGameTests {
         items = test.getLevel().getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, craft.getBoundingBox().inflate(3));
         test.assertTrue(!items.isEmpty(), "Planks mined by hand must drop their item in survival");
         items.forEach(net.minecraft.world.entity.Entity::discard);
+        craft.discard();
+        test.succeed();
+    }
+
+    public static void placingAboveAPlotSectionUpdatesTheHullImmediately(GameTestHelper test) {
+        var level = test.getLevel();
+        var player = editor(level);
+        var plank = Blocks.OAK_PLANKS.defaultBlockState();
+        var blocks = new ArrayList<CraftBlock>();
+        for (int y = 0; y < 16; y++) blocks.add(new CraftBlock(BlockPos.ZERO.above(y), plank));
+        Vec3 base = test.absoluteVec(new Vec3(5.5, 30.5, 5.5));
+        CraftEntity craft = StructureTransfer.create(level, blocks, base, player.getUUID());
+        test.assertTrue(craft != null, "Could not assemble the mast");
+        double oldMass = craft.hull().mass;
+        Vec3 tip = base.add(0, 16, 0);
+        AABB top = AABB.ofSize(tip, 0.8, 0.8, 0.8);
+        test.assertTrue(!HullCollisions.overlapsCraft(level, top, null), "Empty space above the mast was blocked");
+        player.setPos(tip.add(0, 2 - player.getEyeHeight(), 0));
+        player.setXRot(90);
+        player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.OAK_PLANKS));
+        craft.interact(player, InteractionHand.MAIN_HAND);
+        test.assertTrue(craft.cells().get(BlockPos.ZERO.above(16)) == plank && craft.chunkKeys().size() == 1,
+                "Extending the mast across a section must not allocate another plot column");
+        test.assertTrue(HullCollisions.overlapsCraft(level, top, null) && craft.getBoundingBox().maxY == tip.y + 0.5
+                        && Math.abs(craft.hull().mass - oldMass - Materials.massDensity(plank)) < 1.0e-6,
+                "The new block did not immediately extend the hitbox, collisions and mass");
+        CraftEditing.remove(craft, List.of(new CraftBlock(BlockPos.ZERO.above(16), plank)));
+        test.assertTrue(!HullCollisions.overlapsCraft(level, top, null) && Math.abs(craft.hull().mass - oldMass) < 1.0e-6,
+                "Removed top block still has physics");
         craft.discard();
         test.succeed();
     }
@@ -863,16 +893,25 @@ public final class AerolithGameTests {
         for (int x = -1; x <= 1; x++) for (int z = -1; z <= 1; z++) level.setChunkForced(chunk.x() + x, chunk.z() + z, true);
         int wallX = Math.floorDiv(here.getX() + Terrain.TILE / 2, Terrain.TILE) * Terrain.TILE;
         BlockPos wall = new BlockPos(wallX, here.getY(), here.getZ());
-        level.setBlockAndUpdate(wall, Blocks.STONE.defaultBlockState());
         Vec3 start = new Vec3(wallX - 3.125, wall.getY() + 0.5, wall.getZ() + 0.5);
-        CraftEntity craft = StructureTransfer.create(level, List.of(new CraftBlock(BlockPos.ZERO, Blocks.OAK_PLANKS.defaultBlockState())),
-                start, UUID.randomUUID());
-        test.assertTrue(craft != null && WorldPhysics.of(level).impulseAt(craft, new Vec3(craft.hull().mass * 80, 0, 0), start),
-                "Could not launch test cube");
-        test.startSequence().thenIdle(2).thenExecute(() -> {
-            test.assertTrue(craft.getX() > start.x + 1 && craft.getX() <= wallX - 0.45,
-                    "The first impulse must reach the wall without crossing it: x=" + craft.getX() + ", wall=" + wallX);
-            craft.discard();
+        CraftEntity[] craft = {null};
+        // Forced chunks load asynchronously. The cube must launch on its first tick with the surrounding terrain ready.
+        test.startSequence().thenWaitUntil(() -> {
+            test.assertTrue(level.isPositionEntityTicking(BlockPos.containing(start)), "Launch chunk is not ticking yet");
+            for (int x = -1; x <= 1; x++) for (int z = -1; z <= 1; z++) {
+                test.assertTrue(level.getChunkSource().getChunkNow(chunk.x() + x, chunk.z() + z) != null, "Surrounding chunk not loaded yet");
+            }
+        }).thenExecute(() -> {
+            level.setBlockAndUpdate(wall, Blocks.STONE.defaultBlockState());
+            craft[0] = StructureTransfer.create(level, List.of(new CraftBlock(BlockPos.ZERO, Blocks.OAK_PLANKS.defaultBlockState())),
+                    start, UUID.randomUUID());
+            test.assertTrue(craft[0] != null && WorldPhysics.of(level).impulseAt(craft[0], new Vec3(craft[0].hull().mass * 80, 0, 0), start),
+                    "Could not launch test cube");
+        }).thenIdle(2).thenExecute(() -> {
+            double x = craft[0].getX();
+            test.assertTrue(x > start.x + 1 && x <= wallX - 0.45,
+                    "The first impulse must reach the wall without crossing it: x=" + x + ", wall=" + wallX);
+            craft[0].discard();
             level.setBlockAndUpdate(wall, Blocks.AIR.defaultBlockState());
         }).thenSucceed();
     }

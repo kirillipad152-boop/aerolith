@@ -360,7 +360,6 @@ impl TwoBodyConstraintSimd {
             linear: Vector::from(gather![|ii| solver_vels[self.solver_vel1[ii]].linear]),
             angular: AngVector::from(gather![|ii| solver_vels[self.solver_vel1[ii]].angular]),
         };
-
         let mut solver_vel2 = SolverVel {
             linear: Vector::from(gather![|ii| solver_vels[self.solver_vel2[ii]].linear]),
             angular: AngVector::from(gather![|ii| solver_vels[self.solver_vel2[ii]].angular]),
@@ -384,6 +383,37 @@ impl TwoBodyConstraintSimd {
         for ii in 0..SIMD_WIDTH {
             solver_vels[self.solver_vel2[ii]].linear = solver_vel2.linear.extract(ii);
             solver_vels[self.solver_vel2[ii]].angular = solver_vel2.angular.extract(ii);
+        }
+    }
+
+    #[inline(always)]
+    pub unsafe fn warmstart_ptr(&mut self, solver_vels: *mut SolverVel<Real>) {
+        self.assert_disjoint_vels();
+        let mut solver_vel1 = SolverVel {
+            linear: Vector::from(gather![|ii| (*solver_vels.add(self.solver_vel1[ii])).linear]),
+            angular: AngVector::from(gather![|ii| (*solver_vels.add(self.solver_vel1[ii])).angular]),
+        };
+        let mut solver_vel2 = SolverVel {
+            linear: Vector::from(gather![|ii| (*solver_vels.add(self.solver_vel2[ii])).linear]),
+            angular: AngVector::from(gather![|ii| (*solver_vels.add(self.solver_vel2[ii])).angular]),
+        };
+
+        TwoBodyConstraintElement::warmstart_group(
+            &mut self.elements[..self.num_contacts as usize],
+            &self.dir1,
+            #[cfg(feature = "dim3")]
+            &self.tangent1,
+            &self.im1,
+            &self.im2,
+            &mut solver_vel1,
+            &mut solver_vel2,
+        );
+
+        for ii in 0..SIMD_WIDTH {
+            (*solver_vels.add(self.solver_vel1[ii])).linear = solver_vel1.linear.extract(ii);
+            (*solver_vels.add(self.solver_vel1[ii])).angular = solver_vel1.angular.extract(ii);
+            (*solver_vels.add(self.solver_vel2[ii])).linear = solver_vel2.linear.extract(ii);
+            (*solver_vels.add(self.solver_vel2[ii])).angular = solver_vel2.angular.extract(ii);
         }
     }
 
@@ -424,6 +454,60 @@ impl TwoBodyConstraintSimd {
         for ii in 0..SIMD_WIDTH {
             solver_vels[self.solver_vel2[ii]].linear = solver_vel2.linear.extract(ii);
             solver_vels[self.solver_vel2[ii]].angular = solver_vel2.angular.extract(ii);
+        }
+    }
+
+    #[inline(always)]
+    pub unsafe fn solve_ptr(
+        &mut self,
+        solver_vels: *mut SolverVel<Real>,
+        solve_normal: bool,
+        solve_friction: bool,
+    ) {
+        self.assert_disjoint_vels();
+        let mut solver_vel1 = SolverVel {
+            linear: Vector::from(gather![|ii| (*solver_vels.add(self.solver_vel1[ii])).linear]),
+            angular: AngVector::from(gather![|ii| (*solver_vels.add(self.solver_vel1[ii])).angular]),
+        };
+
+        let mut solver_vel2 = SolverVel {
+            linear: Vector::from(gather![|ii| (*solver_vels.add(self.solver_vel2[ii])).linear]),
+            angular: AngVector::from(gather![|ii| (*solver_vels.add(self.solver_vel2[ii])).angular]),
+        };
+
+        TwoBodyConstraintElement::solve_group(
+            self.cfm_factor,
+            &mut self.elements[..self.num_contacts as usize],
+            &self.dir1,
+            #[cfg(feature = "dim3")]
+            &self.tangent1,
+            &self.im1,
+            &self.im2,
+            &mut solver_vel1,
+            &mut solver_vel2,
+            solve_normal,
+            solve_friction,
+        );
+
+        for ii in 0..SIMD_WIDTH {
+            (*solver_vels.add(self.solver_vel1[ii])).linear = solver_vel1.linear.extract(ii);
+            (*solver_vels.add(self.solver_vel1[ii])).angular = solver_vel1.angular.extract(ii);
+            (*solver_vels.add(self.solver_vel2[ii])).linear = solver_vel2.linear.extract(ii);
+            (*solver_vels.add(self.solver_vel2[ii])).angular = solver_vel2.angular.extract(ii);
+        }
+    }
+
+    #[inline(always)]
+    fn assert_disjoint_vels(&self) {
+        #[cfg(debug_assertions)]
+        for i in 0..SIMD_WIDTH {
+            debug_assert_ne!(self.solver_vel1[i], self.solver_vel2[i]);
+            for j in i + 1..SIMD_WIDTH {
+                debug_assert_ne!(self.solver_vel1[i], self.solver_vel1[j]);
+                debug_assert_ne!(self.solver_vel2[i], self.solver_vel2[j]);
+                debug_assert_ne!(self.solver_vel1[i], self.solver_vel2[j]);
+                debug_assert_ne!(self.solver_vel2[i], self.solver_vel1[j]);
+            }
         }
     }
 

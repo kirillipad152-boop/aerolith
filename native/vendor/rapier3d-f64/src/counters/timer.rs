@@ -1,14 +1,20 @@
 use std::{
     fmt::{Display, Error, Formatter},
-    time::Duration,
+    sync::OnceLock,
+    time::{Duration, Instant},
 };
 
-/// A timer.
+fn stage_timer_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("AEROLITH_STAGE_PROFILE").is_some())
+}
+
+/// A timer.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Timer {
     time: Duration,
     #[allow(dead_code)] // The field isn’t used if the `profiler` feature isn’t enabled.
-    start: Option<std::time::Instant>,
+    start: Option<Instant>,
 }
 
 impl Timer {
@@ -27,19 +33,17 @@ impl Timer {
 
     /// Start the timer.
     pub fn start(&mut self) {
-        #[cfg(feature = "profiler")]
-        {
+        if cfg!(feature = "profiler") || stage_timer_enabled() {
             self.time = Duration::from_secs(0);
-            self.start = Some(web_time::Instant::now());
+            self.start = Some(Instant::now());
         }
     }
 
     /// Pause the timer.
     pub fn pause(&mut self) {
-        #[cfg(feature = "profiler")]
-        {
+        if cfg!(feature = "profiler") || stage_timer_enabled() {
             if let Some(start) = self.start {
-                self.time += web_time::Instant::now().duration_since(start);
+                self.time += Instant::now().duration_since(start);
             }
             self.start = None;
         }
@@ -47,9 +51,8 @@ impl Timer {
 
     /// Resume the timer.
     pub fn resume(&mut self) {
-        #[cfg(feature = "profiler")]
-        {
-            self.start = Some(web_time::Instant::now());
+        if cfg!(feature = "profiler") || stage_timer_enabled() {
+            self.start = Some(Instant::now());
         }
     }
 

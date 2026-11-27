@@ -106,15 +106,21 @@ final class Materials {
     }
 
     /** Everything a hull takes from a block: two states with the same signature give the same hull. */
-    private record Signature(Block block, double density, List<AABB> boxes, List<AABB> outline) {}
+    private record Signature(Block block, double density, List<AABB> boxes, List<AABB> outline, boolean fullBlock) {}
 
     private static final Map<BlockState, Signature> SIGNATURES = new ConcurrentHashMap<>();
 
     private static Signature signature(BlockState state) {
         return SIGNATURES.computeIfAbsent(state, s -> {
             List<AABB> boxes = List.copyOf(computeBoxes(s));
-            return new Signature(s.getBlock(), computeMassDensity(s), boxes, boxes.isEmpty() ? List.copyOf(computeOutline(s)) : List.of());
+            boolean full = boxes.size() == 1 && boxes.getFirst().getXsize() >= 1.0 - 1.0e-6
+                    && boxes.getFirst().getYsize() >= 1.0 - 1.0e-6 && boxes.getFirst().getZsize() >= 1.0 - 1.0e-6;
+            return new Signature(s.getBlock(), computeMassDensity(s), boxes, boxes.isEmpty() ? List.copyOf(computeOutline(s)) : List.of(), full);
         });
+    }
+
+    static boolean isFullBlock(BlockState state) {
+        return signature(state).fullBlock();
     }
 
     /**
