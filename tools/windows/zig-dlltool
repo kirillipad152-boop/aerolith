@@ -1,3 +1,0 @@
-#!/bin/sh
-# rustc asks for dlltool to make import libraries for the Windows system DLLs; Zig has one built in.
-exec "${AEROLITH_ZIG_PYTHON:-python3}" -m ziglang dlltool "$@"

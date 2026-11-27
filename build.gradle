@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'dev.aerolith'
-version = '0.4.1'
+version = '0.4.2'
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
 def neoVersion = '21.1.249'
@@ -85,11 +85,13 @@ def cargoBuild = tasks.register('cargoBuild', Exec) {
 // ordinary build above already makes it. Every release jar is built this way.
 def crossWindows = os != 'windows' && arch == 'x86_64' && (project.hasProperty('windowsNatives') || System.getenv('AEROLITH_WINDOWS_NATIVES') != null)
 def windowsLibrary = cargoDirectory.map { it.file("x86_64-pc-windows-gnu/release/aerolith_physics.dll") }
+def windowsBuildScript = layout.projectDirectory.file('tools/build_windows_native.sh')
 def cargoBuildWindows = crossWindows ? tasks.register('cargoBuildWindows', Exec) {
-    commandLine 'sh', layout.projectDirectory.file('tools/build_windows_native.sh').asFile.absolutePath,
+    commandLine 'sh', windowsBuildScript.asFile.absolutePath,
             nativeSources.asFile.absolutePath, cargoDirectory.get().asFile.absolutePath
-    inputs.files(fileTree(nativeSources) { exclude '**/target/**', '**/build/**' })
+    inputs.files(windowsBuildScript, fileTree('tools/windows'), fileTree(nativeSources) { exclude '**/target/**', '**/build/**' })
             .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.property('zigPython', providers.environmentVariable('AEROLITH_ZIG_PYTHON').orElse('python3'))
     outputs.file(windowsLibrary)
     doLast {
         if (!windowsLibrary.get().asFile.isFile()) {

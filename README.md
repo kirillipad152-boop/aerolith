@@ -2,7 +2,7 @@
 
 A mod for **Minecraft Java 1.21.1**, **NeoForge 21.1.249** and **Java 21**. Java handles the world and the players, and the dynamics are computed by Rapier 3D in Rust, in double precision. Neither Sable nor Create is required; Create is supported when present (see below).
 
-The jar contains the native library for **Linux x86-64 (glibc 2.34+)** and for **Windows x86-64 (Windows 10 or later)**. Put it in the `mods` folder of a NeoForge profile (remove any previous Aerolith jar first). On a dedicated server both the server and the clients need the jar; the native code is only loaded where the simulation runs. For macOS or an ARM machine, build the jar on that platform.
+Download the `-mc1.21.1.jar` asset from [Releases](https://github.com/kirillipad152-boop/aerolith/releases), not the source archive. Put it in the `mods` folder of a NeoForge profile and remove any older Aerolith jar. The release includes **Linux x86-64 (glibc 2.34+)** and **Windows x86-64 (Windows 10 or later)** natives. Use a matching x86-64 JVM; no Rust, compiler, or separate DLL is needed to play. On a dedicated server both the server and the clients need the jar. For macOS or a native ARM JVM, build on that platform.
 
 Aerolith turns any structure you build into a **physics craft**: a rigid body with a mass, a centre of mass and an inertia tensor derived from its blocks. It collides with the world and with other crafts, floats on water, carries players and mobs, and is edited in place like ordinary blocks.
 
@@ -163,9 +163,9 @@ You need JDK 21 (`JAVA_HOME` must point to it) and Rust with `cargo` (the build 
 cargo test --locked --manifest-path native/Cargo.toml
 ```
 
-Release jars carry the Windows library as well. On Linux or macOS build it with `pip install ziglang` and then `./gradlew build -PwindowsNatives`: the library is cross-compiled for `x86_64-pc-windows-gnu` with Zig as the linker (`tools/build_windows_native.sh`; set `AEROLITH_ZIG_PYTHON` if `ziglang` is not installed for `python3`). On Windows the ordinary build already makes it. The cross-built DLL has been checked for its JNI exports and its imports (only system DLLs and the Universal C Runtime), but it could not be run on the Linux build machine.
+To build a release jar with both Linux and Windows natives, run `pip install ziglang==0.17.1` and `./gradlew build -PwindowsNatives` on x86-64 Linux. Set `AEROLITH_ZIG_PYTHON` to the Python executable that has Zig if it is not `python3`. On Windows, run `dev.aerolith.NativeSmoke` with `build/classes/java/test` and the built jar on the classpath to check that the packaged DLL loads and runs the physics.
 
-`build` compiles and packs the native library and checks JNI from the final jar. `runGameTestServer` creates a separate test world and does not touch your normal saves. On Windows use `gradlew.bat`; building there needs the Rust MSVC toolchain and its linker.
+`build` compiles and packs the native library and checks JNI from the final jar. `runGameTestServer` creates a separate test world and does not touch your normal saves. To build from source on Windows x86-64, use `.\gradlew.bat build` with the Rust MSVC toolchain and the Visual Studio C++ Build Tools (including the Windows SDK). A Windows source build ships the Windows library; use the release asset if you need both platforms.
 
 ### Create tests
 
