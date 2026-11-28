@@ -7,18 +7,14 @@ import java.util.Set;
 import java.util.UUID;
 
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * What entities standing on a craft do to it. Each server tick a supported entity pushes down with its weight at its
- * feet, and its acceleration relative to the deck is returned to the craft as the opposite impulse. Both are applied at
- * the contact point, so standing near an edge tilts the craft.
+ * Mobs press down and transfer their footsteps at the support point. Players are carried but never load the hull.
  */
 final class CraftLoads {
     private static final double DT = 0.05;
     private static final double GRAVITY = 9.81;
-    private static final double PLAYER_MASS = 70.0;
     private static final double LIVING_DENSITY = 108.0;
     // Walking is bounded to a few m/s per tick of relative acceleration so one lost packet cannot kick the hull.
     private static final double MAX_RELATIVE_DV = 2.0;
@@ -36,18 +32,13 @@ final class CraftLoads {
     }
 
     static double mass(Entity entity) {
-        return entity instanceof Player ? PLAYER_MASS
-                : LIVING_DENSITY * entity.getBbWidth() * entity.getBbWidth() * entity.getBbHeight();
-    }
-
-    boolean supports(Entity entity) {
-        return tracks.containsKey(entity.getUUID());
+        return LIVING_DENSITY * entity.getBbWidth() * entity.getBbWidth() * entity.getBbHeight();
     }
 
     /** Standing still on a craft at rest changes nothing: its weight was already carried when the craft came to rest. */
     void apply(CraftEntity craft, long world, long body, boolean asleep) {
-        if (asleep && tracks.isEmpty() && !HullCollisions.mayBeOccupied(craft)) return;
-        var supported = HullCollisions.supported(craft);
+        if (asleep && tracks.isEmpty() && craft.touchedAt < craft.level().getGameTime() - 2) return;
+        var supported = HullCollisions.supportedMobs(craft);
         if (supported.isEmpty() && tracks.isEmpty()) return;
         Set<UUID> present = new HashSet<>();
         for (HullCollisions.Support support : supported) {

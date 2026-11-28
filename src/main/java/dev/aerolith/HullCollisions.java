@@ -13,6 +13,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.item.PrimedTnt;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.border.WorldBorder;
 import net.minecraft.world.phys.AABB;
@@ -31,6 +32,7 @@ import org.joml.Quaternionfc;
 public final class HullCollisions {
     private static final double EPS = 1.0e-6;
     private static final double SUPPORT_DISTANCE = 1.0 / 32;
+    private static final Vec3 LOAD_PROBE = new Vec3(0, -2 * SUPPORT_DISTANCE, 0);
     private static final double FLOOR_NORMAL = 0.65;
     private static final double DEEP_OVERLAP = 0.2;
     private static final double POSE_STEP = 0.25;
@@ -104,13 +106,6 @@ public final class HullCollisions {
         SECTIONS.remove(event.getLevel());
     }
 
-    /** Receives the push of the local player against a hull so it can be sent to the server. */
-    interface PushSink {
-        void push(CraftEntity craft, Vec3 point, Vec3 direction, double strength);
-    }
-
-    static volatile PushSink pushSink = (craft, point, direction, strength) -> {};
-
     private static final double LEAN = 0.01;
     private static final double SLOPE_NORMAL = 0.5;
     private static final double STEP_HEIGHT = 0.6;
@@ -119,9 +114,9 @@ public final class HullCollisions {
     /**
      * Resolves hull contact like vanilla resolves blocks: vertical first, then horizontal. Floors of any slope that a
      * player can stand on are walked along without losing horizontal speed, low ledges are stepped onto, and walls
-     * slide. Whatever a wall stops is reported as a push.
+     * slide. Players are blocked without applying an impulse to the craft.
      */
-    public static Vec3 clipMovement(Entity entity, Vec3 vanilla) {
+    public static Vec3 clipMovement(Entity entity, Vec3 requested, Vec3 vanilla) {
         if (!eligible(entity) || !CRAFTS.containsKey(entity.level()) || negligible(vanilla)) return vanilla;
         AABB start = entity.getBoundingBox();
         Sweep initial = new Sweep(start, vanilla);
@@ -130,12 +125,12 @@ public final class HullCollisions {
 
         AABB box = start;
         Vec3 total = Vec3.ZERO;
-        boolean grounded = false;
+        boolean grounded = requested.y < 0 && vanilla.y > requested.y + EPS;
         if (Math.abs(vanilla.y) > EPS) {
             Vec3 vertical = new Vec3(0, vanilla.y, 0);
             Hit hit = blocking(entity, new Sweep(box, vertical));
             Vec3 advance = hit == null ? vertical : beforeContact(vertical, hit);
-            grounded = hit != null && vanilla.y < 0 && isFloor(hit);
+            grounded |= hit != null && vanilla.y < 0 && isFloor(hit);
             total = advance;
             box = box.move(advance);
         }
@@ -160,7 +155,7 @@ public final class HullCollisions {
                 rest = new Vec3(rest.x, -(normal.x * rest.x + normal.z * rest.z) / normal.y, rest.z);
                 grounded = true;
             } else {
-                Vec3 up = stepUp(entity, box, rest);
+                Vec3 up = stepUp(entity, box, rest, grounded);
                 if (up != null) {
                     total = total.add(up);
                     box = box.move(up);
@@ -170,7 +165,9 @@ public final class HullCollisions {
                 Vec3 wall = new Vec3(normal.x, 0, normal.z);
                 if (wall.lengthSqr() < EPS) break;
                 wall = wall.normalize();
-                if (hit.craft != null) reportPush(entity, hit.craft, box, wall, -rest.dot(wall));
+                if (hit.craft != null && !(entity instanceof Player) && !entity.level().isClientSide()) {
+                    reportPush(entity, hit.craft, box, wall, -rest.dot(wall));
+                }
                 rest = rest.subtract(wall.scale(rest.dot(wall)));
             }
         }
@@ -196,9 +193,11 @@ public final class HullCollisions {
     }
 
     /** Lift needed to carry the box over a low ledge in the way of {@code rest}, or null. */
-    private static Vec3 stepUp(Entity entity, AABB box, Vec3 rest) {
-        if (!entity.onGround() && entity.getDeltaMovement().y > 0) return null;
-        for (double height = 0.15; height <= STEP_HEIGHT + EPS; height += 0.15) {
+    private static Vec3 stepUp(Entity entity, AABB box, Vec3 rest, boolean grounded) {
+        if (!grounded && !entity.onGround()) return null;
+        double max = Math.min(STEP_HEIGHT, entity.maxUpStep());
+        for (int i = 1; i <= Math.ceil(max / 0.15); i++) {
+            double height = Math.min(i * 0.15, max);
             Vec3 lift = new Vec3(0, height, 0);
             if (blocking(entity, new Sweep(box, lift)) != null) return null;
             Hit ahead = blocking(entity, new Sweep(box.move(lift), rest));
@@ -208,18 +207,10 @@ public final class HullCollisions {
     }
 
     private static void reportPush(Entity entity, CraftEntity craft, AABB box, Vec3 wall, double blocked) {
-        // Leaning is all-or-nothing: on ice a player barely gains speed, yet still pushes with full effort.
         double strength = Math.min(1.0, blocked / LEAN);
         if (strength < 0.05) return;
         Vec3 contact = new Vec3(box.getCenter().x, box.minY + 0.4, box.getCenter().z).subtract(wall.scale(entity.getBbWidth() * 0.5));
-        Vec3 direction = wall.scale(-1);
-        if (entity.level().isClientSide()) {
-            if (entity instanceof net.minecraft.world.entity.player.Player p && p.isLocalPlayer()) {
-                pushSink.push(craft, contact, direction, strength);
-            }
-        } else if (!(entity instanceof net.minecraft.server.level.ServerPlayer)) {
-            craft.queuePush(contact, direction.scale(strength * CraftLoads.pushImpulse(entity)));
-        }
+        craft.queuePush(contact, wall.scale(-strength * CraftLoads.pushImpulse(entity)));
     }
 
     /**
@@ -264,33 +255,30 @@ public final class HullCollisions {
 
     private static boolean overlaps(CraftEntity craft, AABB box, CraftEntity except) {
         if (craft == except || craft.isRemoved() || !craft.getBoundingBox().intersects(box)) return false;
-        List<AABB> parts = craft.collisionBoxes();
-        return !parts.isEmpty() && overlapAt(box, craft.collisionPose(), parts) != null;
+        Hull hull = craft.hull();
+        return hull != null && overlapAt(box, craft.collisionPose(), hull.bodyBoxes) != null;
     }
 
     record Support(Entity entity, Vec3 point) {}
 
-    /** Whether anything can be standing on a craft at rest: something moved against it lately, or a player is at it. */
-    static boolean mayBeOccupied(CraftEntity craft) {
-        if (craft.touchedAt >= craft.level().getGameTime() - 2) return true;
-        // The server does not move players itself, so they are looked for.
-        for (var player : craft.level().players()) {
-            if (craft.getBoundingBox().inflate(0.5).intersects(player.getBoundingBox())) return true;
-        }
-        return false;
+    /** The staff must not pull the floor supporting its holder, or the target follows its own motion. */
+    static boolean standsOn(CraftEntity craft, Entity entity) {
+        Sweep probe = new Sweep(entity.getBoundingBox(), LOAD_PROBE);
+        return entity.onGround() && eligible(entity) && craft.getBoundingBox().intersects(probe.bounds)
+                && isFloor(hitPose(probe, craft.collisionPose(), craft.collisionBoxes(), null));
     }
 
-    /** Living entities that stand on this craft's deck, with the contact point under their feet. */
-    static List<Support> supported(CraftEntity craft) {
+    /** Non-player living entities that stand on this craft's deck, with the contact point under their feet. */
+    static List<Support> supportedMobs(CraftEntity craft) {
         List<AABB> boxes = craft.collisionBoxes();
         if (boxes.isEmpty()) return List.of();
         List<Entity> near = entitiesNear(craft, craft.getBoundingBox().inflate(0.5),
-                entity -> entity instanceof LivingEntity && entity.onGround() && eligible(entity));
+                entity -> entity instanceof LivingEntity && !(entity instanceof Player) && entity.onGround() && eligible(entity));
         if (near.isEmpty()) return List.of();
         Pose pose = craft.collisionPose();
         List<Support> result = new ArrayList<>();
         for (Entity entity : near) {
-            Sweep probe = new Sweep(entity.getBoundingBox(), new Vec3(0, -2 * SUPPORT_DISTANCE, 0));
+            Sweep probe = new Sweep(entity.getBoundingBox(), LOAD_PROBE);
             Hit floor = hitPose(probe, pose, boxes, null);
             if (isFloor(floor)) result.add(new Support(entity, entity.position().add(probe.motion.scale(floor.time))));
         }
@@ -465,7 +453,7 @@ public final class HullCollisions {
                 gone.add(craft);
             } else if (craft != excluded && craft.getBoundingBox().intersects(path.bounds)
                     && level.getEntity(craft.getId()) == craft && !craft.collisionBoxes().isEmpty()) {
-                craft.touchedAt = level.getGameTime();
+                if (entity instanceof LivingEntity && !(entity instanceof Player)) craft.touchedAt = level.getGameTime();
                 Hit hit = hitPose(path, craft.collisionPose(), craft.collisionBoxes(), null);
                 if (hit != null) best[0] = earlier(best[0], new Hit(hit.time, hit.normal, hit.depth, craft));
             }

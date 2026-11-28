@@ -1,6 +1,8 @@
 package dev.aerolith;
 
+import java.util.ArrayList;
 import java.util.BitSet;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,6 +32,7 @@ import net.minecraft.world.entity.item.PrimedTnt;
 import net.minecraft.world.entity.ExperienceOrb;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.saveddata.SavedData;
@@ -189,14 +192,16 @@ public final class Plots {
         return new Moved(offset, level.getBlockState(pos), entity == null ? null : entity.saveWithFullMetadata(level.registryAccess()));
     }
 
-    /** Writes blocks into the plot at {@code origin}, with their block entities; nothing around them is updated. */
+    /** Writes the whole plot before resolving connections, so it only connects to blocks that actually moved. */
     static void write(ServerLevel plot, BlockPos origin, List<Moved> blocks) {
         int previous = populating;
         populating = PlotGrid.idAt(origin);
         try {
+            List<BlockPos> fences = new ArrayList<>();
             for (Moved moved : blocks) {
                 BlockPos pos = origin.offset(moved.offset());
                 plot.setBlock(pos, moved.state(), QUIET);
+                if (Materials.fenceLike(moved.state())) fences.add(pos);
                 if (moved.entity() != null) {
                     BlockEntity entity = plot.getBlockEntity(pos);
                     if (entity != null) {
@@ -205,9 +210,31 @@ public final class Plots {
                     }
                 }
             }
+            refreshFences(plot, fences);
         } finally {
             populating = previous;
         }
+    }
+
+    static void refreshFences(ServerLevel level, List<BlockPos> fences) {
+        // The post and arms of a wall can depend on the wall above it.
+        fences.sort(Comparator.<BlockPos>comparingInt(BlockPos::getY).reversed());
+        for (BlockPos pos : fences) {
+            BlockState state = level.getBlockState(pos);
+            BlockState connected = connectedFenceState(level, pos, state);
+            if (state != connected) level.setBlock(pos, connected, QUIET);
+        }
+    }
+
+    static BlockState connectedFenceState(ServerLevel level, BlockPos pos, BlockState state) {
+        BlockState connected = Block.updateFromNeighbourShapes(state, level, pos);
+        if (connected.getBlock() instanceof FenceGateBlock) {
+            boolean powered = level.hasNeighborSignal(pos);
+            if (powered != connected.getValue(FenceGateBlock.POWERED)) {
+                connected = connected.setValue(FenceGateBlock.POWERED, powered).setValue(FenceGateBlock.OPEN, powered);
+            }
+        }
+        return connected;
     }
 
     /** Removes a block and its block entity without dropping the contents. */

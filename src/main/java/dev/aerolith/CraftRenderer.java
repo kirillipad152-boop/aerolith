@@ -41,9 +41,14 @@ final class CraftRenderer extends EntityRenderer<CraftEntity, CraftRenderer.Stat
     public State createRenderState() { return new State(); }
 
     @Override
+    protected AABB getBoundingBoxForCulling(CraftEntity craft, float partialTick) {
+        return craft.renderBounds(partialTick);
+    }
+
+    @Override
     public void extractRenderState(CraftEntity craft, State render, float partialTick) {
         super.extractRenderState(craft, render, partialTick);
-        render.rotation = new Quaternionf(craft.orientation(partialTick));
+        render.rotation = craft.orientation(partialTick);
         render.origin = craft.plotOrigin();
         var client = Minecraft.getInstance();
         PlotLevel plot = PlotClient.shadow();

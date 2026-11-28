@@ -90,6 +90,7 @@ public final class CraftEntity extends Entity {
     private final LongSet chunkKeys = new LongOpenHashSet();
     private final LongLinkedOpenHashSet changed = new LongLinkedOpenHashSet();
     private boolean hullDirty;
+    private boolean refreshSavedFences;
     /** Blocks without a collision shape that came or changed since the hull was last brought up to date: offset to state. */
     private final Map<BlockPos, BlockState> pendingAim = new HashMap<>();
     private boolean ticketed;
@@ -375,6 +376,15 @@ public final class CraftEntity extends Entity {
     /** Applies pending block changes to the hull and tells clients about them. */
     void settle() {
         if (plotId < 0 || !(level() instanceof ServerLevel server)) return;
+        // Older saves may still have connections to blocks that were left behind during assembly.
+        if (refreshSavedFences && Plots.craftAt(plotOrigin) == this) {
+            List<BlockPos> fences = new ArrayList<>();
+            cells.forEach((offset, state) -> {
+                if (Materials.fenceLike(state)) fences.add(plotPos(offset));
+            });
+            Plots.refreshFences(plotLevel(), fences);
+            refreshSavedFences = false;
+        }
         if (hullDirty) {
             long start = Perf.begin();
             CraftEditing.settle(server, this);
@@ -434,15 +444,20 @@ public final class CraftEntity extends Entity {
     @Override
     public void onAddedToLevel() {
         super.onAddedToLevel();
-        sections = HullCollisions.sections(level());
-        sections.update(this);
-        if (!level().isClientSide() && plotId >= 0) {
-            ServerLevel plot = plotLevel();
-            if (plot != null) {
-                for (long key : chunkKeys) PlotChunks.keep(plot, key);
-                ticketed = true;
+        if (sections == null) {
+            sections = HullCollisions.sections(level());
+            sections.update(this);
+        }
+        if (level() instanceof ServerLevel server) {
+            WorldPhysics.of(server).track(this);
+            if (plotId >= 0 && !ticketed) {
+                ServerLevel plot = plotLevel();
+                if (plot != null) {
+                    for (long key : chunkKeys) PlotChunks.keep(plot, key);
+                    ticketed = true;
+                }
+                Plots.register(this);
             }
-            Plots.register(this);
         }
     }
 
@@ -505,9 +520,9 @@ public final class CraftEntity extends Entity {
             LevelChunk chunk = chunks.apply(key);
             if (chunk != null) scanChunk(chunk, plotOrigin, cells);
         }
-        buildHull();
         previousRotation.set(entityData.get(ROTATION));
         viewRotation.set(previousRotation);
+        buildHull();
     }
 
     /** Client: one block of the plot changed. */
@@ -531,8 +546,12 @@ public final class CraftEntity extends Entity {
 
     public Quaternionf orientation(float partialTick) {
         return level().isClientSide()
-                ? new Quaternionf(previousRotation).slerp(viewRotation, partialTick)
+                ? interpolatedRotation(partialTick)
                 : new Quaternionf(entityData.get(ROTATION));
+    }
+
+    private Quaternionf interpolatedRotation(float partialTick) {
+        return new Quaternionf(previousRotation).slerp(viewRotation, partialTick);
     }
 
     HullCollisions.Pose collisionPose() {
@@ -565,24 +584,28 @@ public final class CraftEntity extends Entity {
             } else {
                 applyAim();
             }
-            Vec3 prior = oldPosition();
-            previousRotation.set(viewRotation);
-            Quaternionfc target = entityData.get(ROTATION);
-            if (isInterpolating() || !prior.equals(position())) {
-                // Position and rotation chase the server pose with one step, or a hull whose origin is far from its
-                // mass would show a visible gap between where it turns and where it is.
-                viewRotation.set(target);
-                if (isInterpolating()) {
-                    getInterpolation().interpolate();
-                } else {
-                    reapplyPosition();
-                }
-            } else if (!viewRotation.equals(target, 1.0e-6f)) {
-                viewRotation.slerp(target, 0.5f);
+            updateClientPose();
+        }
+    }
+
+    void updateClientPose() {
+        Vec3 prior = oldPosition();
+        previousRotation.set(viewRotation);
+        Quaternionfc target = entityData.get(ROTATION);
+        if (isInterpolating() || !prior.equals(position())) {
+            // Position and rotation chase the server pose with one step, or a hull whose origin is far from its
+            // mass would show a visible gap between where it turns and where it is.
+            viewRotation.set(target);
+            if (isInterpolating()) {
+                getInterpolation().interpolate();
+            } else {
                 reapplyPosition();
             }
-            HullCollisions.onPoseChanged(this, prior, previousRotation);
+        } else if (!viewRotation.equals(target, 1.0e-6f)) {
+            viewRotation.slerp(target, 0.5f);
+            reapplyPosition();
         }
+        HullCollisions.onPoseChanged(this, prior, previousRotation);
     }
 
     @Override
@@ -601,11 +624,19 @@ public final class CraftEntity extends Entity {
 
     @Override
     protected AABB makeBoundingBox(Vec3 position) {
-        if (hull == null) {
-            return super.makeBoundingBox(position);
-        }
+        if (hull == null) return super.makeBoundingBox(position);
+        return hullBounds(position, level().isClientSide() ? viewRotation : entityData.get(ROTATION));
+    }
+
+    AABB renderBounds(float partialTick) {
+        if (hull == null) return getInterpolatedBoundingBox(partialTick);
+        // LevelExtractor resets the old position before extracting never-ticked entities.
+        Vec3 origin = tickCount == 0 ? position() : oldPosition().lerp(position(), partialTick);
+        return hullBounds(origin, interpolatedRotation(partialTick));
+    }
+
+    private AABB hullBounds(Vec3 position, Quaternionfc q) {
         AABB a = hull.localBounds;
-        Quaternionfc q = level().isClientSide() ? viewRotation : entityData.get(ROTATION);
         double x = q.x(), y = q.y(), z = q.z(), w = q.w();
         double hx = a.getXsize() * 0.5, hy = a.getYsize() * 0.5, hz = a.getZsize() * 0.5;
         // The rows of the rotation, without their signs, say how far the half extents reach along each axis of the world.
@@ -682,14 +713,17 @@ public final class CraftEntity extends Entity {
         Vec3 prior = position();
         Quaternionfc priorRotation = entityData.get(ROTATION);
         System.arraycopy(state, offset, motion, 0, motion.length);
-        entityData.set(ROTATION, motionRotation());
+        Quaternionf rotation = motionRotation();
+        entityData.set(ROTATION, rotation);
         setPos(motion[0], motion[1], motion[2]);
+        // The final step can land after the chunk has stopped ticking, when vanilla would skip sending it.
+        if (!prior.equals(position()) || !rotation.equals(priorRotation)) needsSync = true;
         if (isVehicle()) getPassengers().forEach(this::positionRider);
         HullCollisions.onPoseChanged(this, prior, priorRotation);
     }
 
     final CraftLoads loads = new CraftLoads();
-    /** The last game time at which something moved against this craft. */
+    /** The last game time at which a mob moved against this craft. */
     long touchedAt = Long.MIN_VALUE;
     private final List<Vec3[]> pushes = new ArrayList<>();
 
@@ -833,6 +867,7 @@ public final class CraftEntity extends Entity {
             for (long key : tag.getLongArray("PlotChunks").orElseGet(() -> new long[0])) chunkKeys.add(key);
             loadCells();
             buildHull();
+            refreshSavedFences = true;
         } else if (tag.get("Hull") instanceof ListTag legacy) {
             migrate(plot, legacy);
         }

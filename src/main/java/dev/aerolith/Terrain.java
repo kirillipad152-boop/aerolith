@@ -273,7 +273,11 @@ final class Terrain {
                         boolean dynamic = state.getBlock().hasDynamicShape();
                         tile.dynamic |= dynamic;
                         List<AABB> shape = dynamic ? state.getCollisionShape(view, cursor).toAabbs() : shapeCache.get(state);
-                        if (shape == null) shapeCache.put(state, shape = List.copyOf(state.getCollisionShape(view, cursor).toAabbs()));
+                        if (shape == null) {
+                            shape = Materials.fenceLike(state) ? Materials.boxes(state)
+                                    : List.copyOf(state.getCollisionShape(view, cursor).toAabbs());
+                            shapeCache.put(state, shape);
+                        }
                         if (shape.isEmpty()) continue;
                         FrictionConfig.Contact material = materials.contact(state);
                         if (shape.size() == 1 && UNIT.equals(shape.getFirst())) {

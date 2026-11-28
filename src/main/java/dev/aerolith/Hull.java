@@ -38,6 +38,7 @@ final class Hull {
     final double mass;
     final AABB localBounds;
     final List<AABB> collisionBoxes;
+    final BoxIndex bodyBoxes;
     private final List<Part> parts;
     final double[] surfaces;
 
@@ -59,10 +60,17 @@ final class Hull {
         var fullBlocks = singleBlock ? null : new it.unimi.dsi.fastutil.longs.LongOpenHashSet(blocks.size());
         List<Part> parts = new ArrayList<>(blocks.size());
         List<Part> pickParts = new ArrayList<>();
+        List<AABB> movement = null;
         for (CraftBlock block : blocks) {
             BlockPos p = block.offset();
             double x = p.getX() - 0.5, y = p.getY() - 0.5, z = p.getZ() - 0.5;
             List<AABB> shapes = Materials.boxes(block.state());
+            List<AABB> entityShapes = Materials.entityBoxes(block.state());
+            if (movement == null && entityShapes != shapes) {
+                movement = new ArrayList<>(blocks.size());
+                for (Part part : parts) movement.add(part.box);
+            }
+            if (movement != null) for (AABB box : entityShapes) movement.add(box.move(x, y, z));
             if (shapes.isEmpty()) {
                 for (AABB b : Materials.outline(block.state())) pickParts.add(new Part(block, b.move(x, y, z), 0.0));
                 continue;
@@ -89,7 +97,8 @@ final class Hull {
         this.parts = List.copyOf(parts);
         List<AABB> cBoxes = new ArrayList<>(parts.size());
         for (Part part : parts) cBoxes.add(part.box);
-        collisionBoxes = new BoxIndex(cBoxes);
+        this.bodyBoxes = new BoxIndex(cBoxes);
+        collisionBoxes = movement == null ? bodyBoxes : new BoxIndex(movement);
         DoubleArrayList surfaces = new DoubleArrayList(blocks.size() * 12);
         Vec3 weighted = Vec3.ZERO;
         double kg = 0.0;
@@ -138,12 +147,13 @@ final class Hull {
         this.mass = kg;
         this.localCom = weighted.scale(1.0 / kg);
         double extent = 0;
-        for (AABB box : collisionBoxes) {
+        for (AABB box : bodyBoxes) {
             Vec3 d = box.getCenter().subtract(localCom);
             extent = Math.max(extent, new Vec3(Math.abs(d.x) + box.getXsize() * 0.5,
                     Math.abs(d.y) + box.getYsize() * 0.5, Math.abs(d.z) + box.getZsize() * 0.5).length());
         }
         this.radius = extent;
+        if (movement != null) for (AABB box : movement) bounds = bounds.minmax(box);
         this.localBounds = bounds;
         this.surfaces = surfaces.toDoubleArray();
     }
@@ -350,7 +360,7 @@ final class Hull {
         Pick best = null;
         Vec3 end = origin.add(direction.scale(reach));
         // Solid parts are found through the index; the rest are few.
-        for (int index : ((BoxIndex) collisionBoxes).near(new AABB(origin, end).inflate(1.0e-6))) {
+        for (int index : bodyBoxes.near(new AABB(origin, end).inflate(1.0e-6))) {
             best = closer(best, parts.get(index), origin, end);
         }
         for (Part part : pickParts) best = closer(best, part, origin, end);
@@ -376,7 +386,7 @@ final class Hull {
         return faces[best];
     }
 
-    /** Groups of blocks that touch face to face. */
+    /** Groups of face-adjacent block cells, even when their collision shapes do not touch. */
     static List<List<CraftBlock>> components(List<CraftBlock> blocks) {
         var pending = new Long2ObjectOpenHashMap<CraftBlock>(blocks.size());
         for (CraftBlock block : blocks) pending.put(block.offset().asLong(), block);
@@ -401,6 +411,7 @@ final class Hull {
         return BlockPos.asLong(p.getX() + face.getStepX(), p.getY() + face.getStepY(), p.getZ() + face.getStepZ());
     }
 
+    /** The same cell adjacency used by {@link #components}, for initial assembly. */
     static boolean connected(List<CraftBlock> blocks) {
         Set<BlockPos> remaining = new HashSet<>();
         for (CraftBlock block : blocks) {

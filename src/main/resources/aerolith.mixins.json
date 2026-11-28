@@ -4,6 +4,7 @@
   "package": "dev.aerolith.mixin",
   "compatibilityLevel": "JAVA_25",
   "mixins": [
+    "CraftTrackingMixin",
     "DistanceManagerPlotMixin",
     "EntityCollisionMixin",
     "EntityFluidMixin",
@@ -19,6 +20,7 @@
     "ServerLevelPlotMixin"
   ],
   "client": [
+    "CraftSectionVisibilityMixin",
     "LevelRendererMeshMixin",
     "StaffMouseTurnMixin"
   ],

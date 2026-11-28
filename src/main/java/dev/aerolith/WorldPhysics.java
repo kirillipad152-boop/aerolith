@@ -114,8 +114,12 @@ public final class WorldPhysics {
 
     static void onJoin(EntityJoinLevelEvent event) {
         if (event.getLevel() instanceof ServerLevel level && event.getEntity() instanceof CraftEntity craft) {
-            of(level).crafts.putIfAbsent(craft, new Body(craft));
+            of(level).track(craft);
         }
+    }
+
+    void track(CraftEntity craft) {
+        crafts.computeIfAbsent(craft, Body::new);
     }
 
     static void onLeave(EntityLeaveLevelEvent event) {
@@ -268,7 +272,7 @@ public final class WorldPhysics {
         }
         if (failed || body == null || body.grab != null || body.id == 0
                 || (!body.active && !craft.anchored()) || !level.isPositionEntityTicking(craft.blockPosition())
-                || craft.isVehicle() || craft.loads.supports(player)) {
+                || craft.isVehicle() || HullCollisions.standsOn(craft, player)) {
             AssemblerItem.message(player, "staff_unavailable");
             return;
         }
@@ -309,7 +313,7 @@ public final class WorldPhysics {
         ServerPlayer player = grab.player;
         if (!simulated || player.isRemoved() || !player.isAlive() || player.level() != level || !player.isCreative()
                 || TowStaffItem.held(player) != grab.staff
-                || !craft.canEdit(player) || player.isPassenger() || craft.isVehicle() || craft.loads.supports(player)) {
+                || !craft.canEdit(player) || player.isPassenger() || craft.isVehicle() || HullCollisions.standsOn(craft, player)) {
             release(body);
             return;
         }
@@ -471,6 +475,7 @@ public final class WorldPhysics {
         flight = STEPPER.submit(() -> {
             long stepStart = Perf.begin();
             try {
+                slowDown();
                 return NativePhysics.step(w, windX, windY, windZ);
             } finally {
                 Perf.end("server.native-step", stepStart);
@@ -479,6 +484,19 @@ public final class WorldPhysics {
         if (SYNC) {
             quiesce();
             applyLanded();
+        }
+    }
+
+    /** For tests only: until this time (System.nanoTime) every step takes {@link #slowStepMs} longer, as on an overloaded machine. */
+    static volatile long slowUntil;
+    static volatile long slowStepMs;
+
+    private static void slowDown() {
+        if (System.nanoTime() - slowUntil >= 0) return;
+        try {
+            Thread.sleep(slowStepMs);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 

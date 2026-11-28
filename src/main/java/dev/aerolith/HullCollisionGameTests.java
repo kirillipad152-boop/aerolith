@@ -107,6 +107,25 @@ public final class HullCollisionGameTests {
         test.succeed();
     }
 
+    public static void fenceKeepsVanillaBarrierButNoGhostMassOrSelection(GameTestHelper test) {
+        Vec3 origin = origin(test);
+        CraftEntity craft = craft(test, origin, new CraftBlock(BlockPos.ZERO, Blocks.OAK_FENCE.defaultBlockState()));
+        test.assertTrue(Math.abs(craft.hull().mass - 480.0 / 16) < 1e-9, "An isolated oak post is one block tall and a quarter wide");
+        test.assertTrue(craft.hull().pick(new Vec3(1, 0.75, 0), new Vec3(-1, 0, 0), 2) == null,
+                "The invisible part of a fence must not be selectable");
+
+        ItemEntity item = item(test, origin.add(0, 1.6, 0));
+        item.move(MoverType.SELF, new Vec3(0, -1, 0));
+        near(test, item, origin.add(0, 1, 0), "The player and mob barrier must still be 1.5 blocks tall");
+        item.setPos(origin.add(1, 0.75, 0));
+        item.setOnGround(false);
+        item.move(MoverType.SELF, new Vec3(-2, 0, 0));
+        near(test, item, origin.add(0.25, 0.75, 0), "An airborne entity must not step over the fence");
+        item.discard();
+        craft.discard();
+        test.succeed();
+    }
+
     public static void translatingSidePushesInsteadOfPassingThrough(GameTestHelper test) {
         Vec3 origin = origin(test);
         CraftEntity craft = craft(test, origin, planks(BlockPos.ZERO));
@@ -215,6 +234,32 @@ public final class HullCollisionGameTests {
         pig.discard();
         craft.discard();
         test.succeed();
+    }
+
+    @SuppressWarnings("removal")
+    public static void walkingPlayerDoesNotLoadOrTiltCraft(GameTestHelper test) {
+        var chunk = net.minecraft.world.level.ChunkPos.containing(BlockPos.containing(origin(test)));
+        Vec3 start = new Vec3(chunk.getMinBlockX() + 7.5, origin(test).y + 24, chunk.getMinBlockZ() + 7.5);
+        CraftEntity occupied = craft(test, start, planks(BlockPos.ZERO));
+        CraftEntity empty = craft(test, start.add(0, 0, 2), planks(BlockPos.ZERO));
+        ServerPlayer player = test.makeMockServerPlayerInLevel();
+        player.setNoGravity(true);
+        ackTeleport(player, 1);
+        player.connection.handleAcceptPlayerLoad(new net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket());
+        test.startSequence().thenWaitUntil(() ->
+                test.assertTrue(empty.comVelocity().y < -0.1 && occupied.comVelocity().y < -0.1, "Both rafts must be falling"))
+                .thenExecuteFor(12, () -> {
+                    player.setPos(occupied.position().add(0.25, 0.9, 0));
+                    player.move(MoverType.SELF, new Vec3(test.getTick() % 2 == 0 ? 0.18 : -0.18, -0.6, 0));
+                    test.assertTrue(player.onGround(), "Player must still be supported by the raft");
+                }).thenExecute(() -> {
+                    boolean sameFall = occupied.getY() < start.y - 0.5 && Math.abs(occupied.getY() - empty.getY()) < 1e-6
+                            && occupied.comVelocity().distanceToSqr(empty.comVelocity()) < 1e-12 && occupied.spin() < 1e-6;
+                    occupied.discard();
+                    empty.discard();
+                    test.getLevel().getServer().getPlayerList().remove(player);
+                    test.assertTrue(sameFall, "Walking off-centre must not move or tilt the raft relative to an empty one");
+                }).thenSucceed();
     }
 
     public static void creatureWalkingIntoAHullPushesIt(GameTestHelper test) {

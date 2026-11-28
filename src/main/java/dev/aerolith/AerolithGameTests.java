@@ -21,14 +21,18 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.FenceBlock;
+import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.WallBlock;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.entity.FurnaceBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.SlabType;
+import net.minecraft.world.level.block.state.properties.WallSide;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -152,6 +156,145 @@ public final class AerolithGameTests {
         double sum = 0.0;
         for (int i = 0; i < hull.surfaces.length; i += 8) if (hull.surfaces[i] == 0) sum += hull.surfaces[i + 7];
         return sum;
+    }
+
+    public static void commonMaterialsHaveDensity(GameTestHelper test) {
+        var registry = net.minecraft.core.registries.BuiltInRegistries.BLOCK;
+        int solid = 0, known = 0;
+        for (var block : registry) {
+            BlockState state = block.defaultBlockState();
+            if (!registry.getKey(block).getNamespace().equals("minecraft") || !Materials.hasCollision(state)) continue;
+            solid++;
+            if (Materials.density(state) > 0) known++;
+        }
+        test.assertTrue(known * 10 >= solid * 9, "Density should cover 90% of vanilla collision blocks: " + known + "/" + solid);
+        Aerolith.LOG.info("Material density coverage (collidable vanilla defaults): {}/{}", known, solid);
+        test.assertTrue(Materials.massDensity(Blocks.OAK_FENCE.defaultBlockState()) == Materials.massDensity(Blocks.OAK_PLANKS.defaultBlockState())
+                && Materials.massDensity(Blocks.GLASS_PANE.defaultBlockState()) == Materials.massDensity(Blocks.GLASS.defaultBlockState())
+                && Materials.massDensity(Blocks.DIAMOND_BLOCK.defaultBlockState()) > Materials.massDensity(Blocks.STONE.defaultBlockState())
+                && Materials.massDensity(Blocks.STONE.defaultBlockState()) > Materials.massDensity(Blocks.SAND.defaultBlockState()),
+                "Common materials or variants have inconsistent densities");
+        test.succeed();
+    }
+
+    public static void fencesReconnectWhenAssembledAndDocked(GameTestHelper test) {
+        ServerPlayer player = editor(test.getLevel());
+        BlockPos left = new BlockPos(4, 4, 5), middle = left.east(), right = middle.east();
+        BlockState fence = Blocks.OAK_FENCE.defaultBlockState();
+        test.setBlock(left, fence.setValue(FenceBlock.EAST, true));
+        test.setBlock(middle, fence.setValue(FenceBlock.WEST, true).setValue(FenceBlock.EAST, true));
+        test.setBlock(right, fence.setValue(FenceBlock.WEST, true));
+        test.assertTrue(test.getBlockState(middle).getValue(FenceBlock.EAST), "Test row must start connected");
+
+        CraftEntity craft = assembleWithTool(test, player, left, middle);
+        test.assertTrue(craft.cells().get(BlockPos.ZERO).getValue(FenceBlock.EAST), "A connection inside the craft was lost");
+        BlockState end = craft.cells().get(BlockPos.ZERO.east());
+        test.assertTrue(end.getValue(FenceBlock.WEST) && !end.getValue(FenceBlock.EAST)
+                && !test.getBlockState(right).getValue(FenceBlock.WEST), "A connection to the old world survived assembly");
+        Vec3 across = new Vec3(0, 0, 1);
+        test.assertTrue(craft.hull().pick(new Vec3(0.4, 0, -1), across, 2) != null
+                && craft.hull().pick(new Vec3(0.4, 0.15, -1), across, 2) == null, "Fence rails must have the visible gap between them");
+
+        var saved = save(craft);
+        ServerLevel plot = craft.plotLevel();
+        BlockPos oldEnd = craft.plotPos(BlockPos.ZERO.east());
+        craft.remove(net.minecraft.world.entity.Entity.RemovalReason.UNLOADED_TO_CHUNK);
+        plot.setBlock(oldEnd, end.setValue(FenceBlock.EAST, true), Plots.QUIET);
+        var level = test.getLevel();
+        craft = Aerolith.CRAFT.get().create(level, net.minecraft.world.entity.EntitySpawnReason.TRIGGERED);
+        load(craft, saved);
+        test.assertTrue(level.addFreshEntity(craft), "Could not reload the saved fence craft");
+        craft.settle();
+        test.assertFalse(craft.cells().get(BlockPos.ZERO.east()).getValue(FenceBlock.EAST), "An older saved plot kept its stale fence rail");
+        test.assertTrue(StructureTransfer.dock(test.getLevel(), player, craft), "Fence craft would not dock");
+        test.assertTrue(test.getBlockState(middle).getValue(FenceBlock.EAST) && test.getBlockState(right).getValue(FenceBlock.WEST),
+                "Docked and existing fences did not reconnect to each other");
+        test.succeed();
+    }
+
+    public static void stoneWallsUseLowArmsOffTheWorldAndReconnectOnDocking(GameTestHelper test) {
+        ServerPlayer player = editor(test.getLevel());
+        BlockPos left = new BlockPos(4, 4, 5), middle = left.east(), right = middle.east();
+        BlockState wall = Blocks.COBBLESTONE_WALL.defaultBlockState();
+        test.setBlock(left, wall.setValue(WallBlock.EAST, WallSide.LOW));
+        test.setBlock(right, wall.setValue(WallBlock.WEST, WallSide.LOW));
+        test.setBlock(middle, Blocks.STONE_BRICK_WALL.defaultBlockState()
+                .setValue(WallBlock.WEST, WallSide.LOW).setValue(WallBlock.EAST, WallSide.LOW));
+        test.setBlock(middle.above(), Blocks.STONE);
+        test.assertTrue(test.getBlockState(middle).getValue(WallBlock.WEST) == WallSide.TALL, "Stone above the wall must raise its arms");
+
+        CraftEntity craft = assembleWithTool(test, player, left, middle);
+        var state = craft.cells().get(BlockPos.ZERO.east());
+        test.assertTrue(state.getValue(WallBlock.WEST) == WallSide.LOW && state.getValue(WallBlock.EAST) == WallSide.NONE
+                && state.getValue(WallBlock.UP) && test.getBlockState(right).getValue(WallBlock.WEST) == WallSide.NONE,
+                "The stone wall must recalculate its post and arms using only its new neighbours");
+        Vec3 across = new Vec3(0, 0, 1);
+        test.assertTrue(craft.hull().pick(new Vec3(0.6, 0.25, -1), across, 2) != null
+                && craft.hull().pick(new Vec3(0.6, 0.42, -1), across, 2) == null
+                && craft.collisionBoxes().stream().anyMatch(box -> box.maxY == 1.0 && box.minX <= 0.6 && box.maxX >= 0.6),
+                "The low arm must use its visible shape for aiming and keep the vanilla entity barrier");
+        test.assertTrue(StructureTransfer.dock(test.getLevel(), player, craft), "Stone walls would not dock");
+        state = test.getBlockState(middle);
+        test.assertTrue(state.getValue(WallBlock.WEST) == WallSide.TALL && state.getValue(WallBlock.EAST) == WallSide.TALL
+                && test.getBlockState(right).getValue(WallBlock.WEST) == WallSide.LOW,
+                "Docked stone walls must reconnect to world walls and recover their tall arms");
+        test.succeed();
+    }
+
+    public static void faceAdjacentCellsStayOneCraftWithoutShapeContact(GameTestHelper test) {
+        BlockPos bottom = new BlockPos(5, 6, 5);
+        ServerPlayer player = editor(test.getLevel());
+        test.setBlock(bottom, Blocks.SMOOTH_STONE_SLAB);
+        CraftEntity craft = assembleWithTool(test, player, bottom, bottom);
+        Vec3 eye = craft.position().add(0, 2.5, 0);
+        player.setPos(eye.x, eye.y - player.getEyeHeight(), eye.z);
+        player.setXRot(90);
+        player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.COBBLESTONE_SLAB, 3));
+        craft.interact(player, InteractionHand.MAIN_HAND);
+
+        BlockState upper = craft.cells().get(BlockPos.ZERO.above());
+        test.assertTrue(craft.blocks().size() == 2 && upper != null && upper.is(Blocks.COBBLESTONE_SLAB)
+                && upper.getValue(SlabBlock.TYPE) == SlabType.BOTTOM, "A placed slab in a face-adjacent cell must stay on the same craft");
+        test.assertTrue(craft.collisionBoxes().stream().noneMatch(box -> box.minY < 0.25 && box.maxY > 0.25),
+                "Connecting the cells must not fill the half-block air gap between the slab shapes");
+        test.assertTrue(StructureTransfer.dock(test.getLevel(), player, craft), "Could not dock the two-slab craft");
+        craft = assembleWithTool(test, player, bottom, bottom.above());
+        test.assertTrue(craft.blocks().size() == 2, "Assembly must use the same face-adjacency rule as editing");
+        craft.discard();
+        test.succeed();
+    }
+
+    public static void openingGateKeepsTheCraftAndItsMass(GameTestHelper test) {
+        Vec3 start = Vec3.atCenterOf(test.absolutePos(new BlockPos(5, 6, 5)));
+        CraftEntity craft = StructureTransfer.create(test.getLevel(), List.of(new CraftBlock(BlockPos.ZERO,
+                Blocks.OAK_FENCE_GATE.defaultBlockState().setValue(FenceGateBlock.IN_WALL, true))), start, UUID.randomUUID());
+        test.assertTrue(craft != null && !craft.collisionBoxes().isEmpty(), "Closed gate must block movement");
+        BlockPos gate = craft.plotOrigin();
+        ServerLevel plot = craft.plotLevel();
+        BlockState state = plot.getBlockState(gate);
+        test.assertFalse(state.getValue(FenceGateBlock.IN_WALL), "Gate kept a wall connection after being moved away");
+        double mass = craft.hull().mass;
+        plot.setBlockAndUpdate(gate, state.setValue(FenceGateBlock.OPEN, true));
+        craft.settle();
+        test.assertTrue(!craft.isRemoved() && Math.abs(craft.hull().mass - mass) < 1e-9
+                && craft.collisionBoxes().isEmpty(), "An open gate must be passable but keep its mass and craft");
+        Vec3 ray = new Vec3(0, 0, -2);
+        test.assertTrue(craft.hull().pick(ray, new Vec3(0, 0, 1), 4) == null, "An open doorway must not have a rigid panel in its middle");
+        craft.discard();
+        test.succeed();
+    }
+
+    public static void craftLandsAtVisibleFenceHeight(GameTestHelper test) {
+        BlockPos pos = new BlockPos(5, 3, 5);
+        test.setBlock(pos, Blocks.OAK_FENCE);
+        Vec3 fence = Vec3.atCenterOf(test.absolutePos(pos));
+        CraftEntity craft = StructureTransfer.create(test.getLevel(), List.of(new CraftBlock(BlockPos.ZERO,
+                Blocks.OAK_PLANKS.defaultBlockState())), fence.add(0, 3, 0), UUID.randomUUID());
+        test.assertTrue(craft != null, "Could not spawn craft over the fence");
+        test.startSequence().thenWaitUntil(() ->
+                test.assertTrue(Math.abs(craft.getY() - (fence.y + 1)) < 0.04 && craft.speed() < 0.1,
+                        "Rigid craft must rest on the post, not the invisible player barrier: y=" + craft.getY())
+        ).thenExecute(craft::discard).thenSucceed();
     }
 
     public static void itemRestsOnSolidDeck(GameTestHelper test) {
@@ -1063,7 +1206,7 @@ public final class AerolithGameTests {
         CraftEntity craft = assembleWithTool(test, editor(test.getLevel()), new BlockPos(4, 2, 4), new BlockPos(6, 2, 6));
         var pig = test.spawn(net.minecraft.world.entity.EntityTypes.PIG, 5.5f, 4.5f, 5.5f);
         test.startSequence().thenWaitUntil(() -> test.assertTrue(
-                HullCollisions.supported(craft).stream().anyMatch(s -> s.entity() == pig) && CraftLoads.mass(pig) > 50,
+                HullCollisions.supportedMobs(craft).stream().anyMatch(s -> s.entity() == pig) && CraftLoads.mass(pig) > 50,
                 "A pig standing on the deck must be a supported load")
         ).thenExecute(() -> { pig.discard(); craft.discard(); }).thenSucceed();
     }
