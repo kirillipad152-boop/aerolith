@@ -3,12 +3,6 @@ package dev.aerolith;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.core.BlockPos;
@@ -41,23 +35,6 @@ public final class WorldPhysics {
     private final Map<CraftEntity, Body> crafts = new LinkedHashMap<>();
     private final Long2ObjectOpenHashMap<Body> bodies = new Long2ObjectOpenHashMap<>();
     private long world;
-    /**
-     * The engine steps on a thread of its own while the rest of the server tick goes on, and the crafts take its poses a tick
-     * later. Nothing may touch the native world while a step is in flight, which is only ever the case between a tick and
-     * the next: everything the engine is given is given in {@link #tick}, after the last step has been collected.
-     */
-    private static final ExecutorService STEPPER = Executors.newCachedThreadPool(task -> {
-        Thread thread = new Thread(task, "aerolith-physics-step");
-        thread.setDaemon(true);
-        return thread;
-    });
-    /** {@code -Daerolith.syncPhysics=true} steps on the server thread again, for finding out whether a problem is the threading's. */
-    private static final boolean SYNC = Boolean.getBoolean("aerolith.syncPhysics");
-    /** How long the server waits for a step that is late before it goes on without it (milliseconds). */
-    private static final long GRACE_MS = 15;
-    private Future<double[]> flight;
-    /** What the last step found, until the crafts have been moved to it. */
-    private double[] landed;
     private int awake;
     private boolean failed;
     private Vec3 wind = Vec3.ZERO;
@@ -114,12 +91,8 @@ public final class WorldPhysics {
 
     static void onJoin(EntityJoinLevelEvent event) {
         if (event.getLevel() instanceof ServerLevel level && event.getEntity() instanceof CraftEntity craft) {
-            of(level).track(craft);
+            of(level).crafts.putIfAbsent(craft, new Body(craft));
         }
-    }
-
-    void track(CraftEntity craft) {
-        crafts.computeIfAbsent(craft, Body::new);
     }
 
     static void onLeave(EntityLeaveLevelEvent event) {
@@ -165,6 +138,22 @@ public final class WorldPhysics {
         return MAX_BODIES - crafts.size();
     }
 
+    int craftCount() {
+        return crafts.size();
+    }
+
+    java.util.List<dev.aerolith.api.CraftHandle> handles() {
+        java.util.List<dev.aerolith.api.CraftHandle> out = new java.util.ArrayList<>(crafts.size());
+        for (CraftEntity craft : crafts.keySet()) {
+            if (!craft.isRemoved()) out.add(InternalApi.handle(craft));
+        }
+        return out;
+    }
+
+    FrictionConfig.Contact contact(BlockState state) {
+        return materials.contact(state);
+    }
+
     boolean isSimulated(CraftEntity craft) {
         Body body = crafts.get(craft);
         return !failed && body != null && body.id != 0 && body.active;
@@ -194,14 +183,19 @@ public final class WorldPhysics {
 
     private void attach(CraftEntity craft, Body body) {
         if (body.id == 0) {
-            quiesce();
             Hull hull = craft.hull();
             Hull.Colliders geometry = hull.colliders(materials);
-            body.id = NativePhysics.addBody(world, craft.nativeState(), geometry.boxes(), geometry.frictionCells(), hull.masses(), hull.surfaces);
+            body.id = NativePhysics.addBodyWithCavities(world, craft.nativeState(), geometry.boxes(),
+                    geometry.frictionCells(), hull.masses(), hull.surfaces, hull.cavities);
             bodies.put(body.id, body);
             body.asleep = false;
             body.active = !craft.anchored();
             if (!body.active) NativePhysics.setActive(world, body.id, false);
+            if (craft.throttle() != 0.0) NativePhysics.setThrottle(world, body.id, craft.throttle());
+            if (craft.flaps() != 0.0) NativePhysics.setFlaps(world, body.id, craft.flaps());
+            if (craft.controlPitch() != 0.0 || craft.controlYaw() != 0.0 || craft.controlRoll() != 0.0) {
+                NativePhysics.setControls(world, body.id, craft.controlPitch(), craft.controlYaw(), craft.controlRoll());
+            }
         }
     }
 
@@ -221,8 +215,60 @@ public final class WorldPhysics {
     boolean impulseAt(CraftEntity craft, Vec3 impulse, Vec3 point) {
         Body body = crafts.get(craft);
         if (failed || world == 0 || body == null || body.id == 0 || !body.active) return false;
-        quiesce();
         NativePhysics.impulseAt(world, body.id, impulse.x, impulse.y, impulse.z, point.x, point.y, point.z);
+        return true;
+    }
+
+    boolean impulse(CraftEntity craft, Vec3 impulse) {
+        Body body = crafts.get(craft);
+        if (failed || world == 0 || body == null || body.id == 0 || !body.active) return false;
+        NativePhysics.impulse(world, body.id, impulse.x, impulse.y, impulse.z);
+        return true;
+    }
+
+    boolean wake(CraftEntity craft) {
+        Body body = crafts.get(craft);
+        if (failed || world == 0 || body == null || body.id == 0 || !body.active) return false;
+        NativePhysics.wake(world, body.id);
+        body.asleep = false;
+        return true;
+    }
+
+    boolean setThrottle(CraftEntity craft, double throttle) {
+        if (!Double.isFinite(throttle) || throttle < 0.0 || throttle > 1.0) {
+            throw new IllegalArgumentException("throttle must be in [0, 1]");
+        }
+        craft.recordThrottle(throttle);
+        Body body = crafts.get(craft);
+        if (failed || world == 0 || body == null || body.id == 0) return false;
+        NativePhysics.setThrottle(world, body.id, throttle);
+        if (throttle > 0.0 && body.asleep && body.active) {
+            NativePhysics.wake(world, body.id);
+            body.asleep = false;
+        }
+        return true;
+    }
+
+    boolean setControls(CraftEntity craft, double pitch, double yaw, double roll) {
+        if (!Double.isFinite(pitch + yaw + roll)
+                || pitch < -1.0 || pitch > 1.0 || yaw < -1.0 || yaw > 1.0 || roll < -1.0 || roll > 1.0) {
+            throw new IllegalArgumentException("controls must be in [-1, 1]");
+        }
+        craft.recordControls(pitch, yaw, roll);
+        Body body = crafts.get(craft);
+        if (failed || world == 0 || body == null || body.id == 0) return false;
+        NativePhysics.setControls(world, body.id, pitch, yaw, roll);
+        return true;
+    }
+
+    boolean setFlaps(CraftEntity craft, double flaps) {
+        if (!Double.isFinite(flaps) || flaps < 0.0 || flaps > 1.0) {
+            throw new IllegalArgumentException("flaps must be in [0, 1]");
+        }
+        craft.recordFlaps(flaps);
+        Body body = crafts.get(craft);
+        if (failed || world == 0 || body == null || body.id == 0) return false;
+        NativePhysics.setFlaps(world, body.id, flaps);
         return true;
     }
 
@@ -272,7 +318,7 @@ public final class WorldPhysics {
         }
         if (failed || body == null || body.grab != null || body.id == 0
                 || (!body.active && !craft.anchored()) || !level.isPositionEntityTicking(craft.blockPosition())
-                || craft.isVehicle() || HullCollisions.standsOn(craft, player)) {
+                || craft.isVehicle() || craft.loads.supports(player)) {
             AssemblerItem.message(player, "staff_unavailable");
             return;
         }
@@ -313,7 +359,7 @@ public final class WorldPhysics {
         ServerPlayer player = grab.player;
         if (!simulated || player.isRemoved() || !player.isAlive() || player.level() != level || !player.isCreative()
                 || TowStaffItem.held(player) != grab.staff
-                || !craft.canEdit(player) || player.isPassenger() || craft.isVehicle() || HullCollisions.standsOn(craft, player)) {
+                || !craft.canEdit(player) || player.isPassenger() || craft.isVehicle() || craft.loads.supports(player)) {
             release(body);
             return;
         }
@@ -341,7 +387,6 @@ public final class WorldPhysics {
     private void detach(Body body) {
         release(body);
         if (body.id != 0) {
-            quiesce();
             bodies.remove(body.id);
             if (world != 0) NativePhysics.removeBody(world, body.id);
             body.id = 0;
@@ -362,74 +407,7 @@ public final class WorldPhysics {
         if (physics != null) physics.terrain.changed(pos);
     }
 
-    /** Waits for the step in flight, if there is one, and keeps what it found for the next tick. */
-    private void quiesce() {
-        Future<double[]> step = flight;
-        if (step == null) return;
-        long start = Perf.begin();
-        try {
-            landed = step.get();
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while the engine was stepping", interrupted);
-        } catch (ExecutionException failure) {
-            Throwable cause = failure.getCause();
-            if (cause instanceof RuntimeException runtime) throw runtime;
-            if (cause instanceof Error error) throw error;
-            throw new IllegalStateException(cause);
-        } finally {
-            flight = null;
-            Perf.end("server.wait", start);
-        }
-    }
-
-    /**
-     * A step a few milliseconds over its tick is waited for, rather than skipped: a skipped tick shows as a craft standing
-     * still for a tick and then jumping, which is what a step now and then too slow looks like.
-     */
-    private static boolean finishesSoon(Future<double[]> step) {
-        long start = Perf.begin();
-        try {
-            step.get(GRACE_MS, TimeUnit.MILLISECONDS);
-            return true;
-        } catch (TimeoutException late) {
-            return false;
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            return true;
-        } catch (ExecutionException failure) {
-            return true; // reported by the next quiesce()
-        } finally {
-            Perf.end("server.grace", start);
-        }
-    }
-
-    /** Gives up a step in flight without looking at what it found; the world is about to be destroyed or restarted. */
-    private void drain() {
-        Future<double[]> step = flight;
-        flight = null;
-        landed = null;
-        if (step == null) return;
-        try {
-            step.get();
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException ignored) {
-            // The failure that matters has been reported, or will be by whoever asked for the step.
-        }
-    }
-
     private void tick() {
-        if (flight != null) {
-            // A step that is not done yet is slower than a tick: the crafts keep their poses and the game carries on, so an
-            // overloaded engine runs in slow motion instead of holding the whole server up.
-            if (!SYNC && !flight.isDone() && !finishesSoon(flight)) {
-                Perf.end("server.late", Perf.begin());
-                return;
-            }
-            quiesce();
-        }
-        applyLanded();
         for (var it = crafts.values().iterator(); it.hasNext();) {
             Body body = it.next();
             if (body.craft.isRemoved() || level.getEntity(body.craft.getId()) != body.craft) {
@@ -466,45 +444,11 @@ public final class WorldPhysics {
         long terrainStart = Perf.begin();
         terrain.sync(world);
         Perf.end("server.terrain", terrainStart);
-        if (bodies.isEmpty()) {
-            awake = 0;
-            return;
-        }
-        long w = world;
-        double windX = wind.x, windY = wind.y, windZ = wind.z;
-        flight = STEPPER.submit(() -> {
-            long stepStart = Perf.begin();
-            try {
-                slowDown();
-                return NativePhysics.step(w, windX, windY, windZ);
-            } finally {
-                Perf.end("server.native-step", stepStart);
-            }
-        });
-        if (SYNC) {
-            quiesce();
-            applyLanded();
-        }
-    }
-
-    /** For tests only: until this time (System.nanoTime) every step takes {@link #slowStepMs} longer, as on an overloaded machine. */
-    static volatile long slowUntil;
-    static volatile long slowStepMs;
-
-    private static void slowDown() {
-        if (System.nanoTime() - slowUntil >= 0) return;
-        try {
-            Thread.sleep(slowStepMs);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    private void applyLanded() {
-        double[] moved = landed;
-        if (moved == null) return;
-        landed = null;
-        long now = level.getGameTime();
+        awake = 0;
+        if (bodies.isEmpty()) return;
+        long stepStart = Perf.begin();
+        double[] moved = NativePhysics.step(world, wind.x, wind.y, wind.z);
+        Perf.end("server.native-step", stepStart);
         awake = moved.length / NativePhysics.RECORD;
         long applyStart = Perf.begin();
         for (int i = 0; i < moved.length; i += NativePhysics.RECORD) {
@@ -515,6 +459,9 @@ public final class WorldPhysics {
             body.craft.applyNative(moved, i + 1);
         }
         Perf.end("server.apply", applyStart);
+        if (dev.aerolith.api.AerolithEvents.hasPostStepListeners()) {
+            InternalApi.notifyPostStep(level);
+        }
     }
 
     /** Native COM speed limit (80 m/s × 0.05 s), plus clearance for terrain shapes extending outside their block. */
@@ -535,7 +482,8 @@ public final class WorldPhysics {
         double minZ = Math.max(box.minZ, c.z - r), maxZ = Math.min(box.maxZ, c.z + r);
         WorldBorder border = level.getWorldBorder();
         if (minX < border.getMinX() || maxX > border.getMaxX() || minZ < border.getMinZ() || maxZ > border.getMaxZ()) return false;
-        // There is no limit of height: above and below the world there is simply no terrain to claim.
+        // Terrain tiles are clipped vertically below; a wide raft near bedrock must not be frozen by its horizontal reach.
+        if (c.y < level.getMinY() - 24 || c.y > level.getMaxY() + 129) return false;
         int x1 = Mth.floor(minX), x2 = Mth.floor(maxX), z1 = Mth.floor(minZ), z2 = Mth.floor(maxZ);
         for (int cz = z1 >> 4; cz <= z2 >> 4; cz++) {
             for (int cx = x1 >> 4; cx <= x2 >> 4; cx++) {
@@ -554,6 +502,10 @@ public final class WorldPhysics {
 
     void wind(Vec3 value) {
         wind = value;
+    }
+
+    Vec3 wind() {
+        return wind;
     }
 
     private static final int RETRY_TICKS = 100;
@@ -595,7 +547,6 @@ public final class WorldPhysics {
     }
 
     private void close() {
-        drain();
         crafts.values().forEach(WorldPhysics::release);
         if (world != 0) {
             try {

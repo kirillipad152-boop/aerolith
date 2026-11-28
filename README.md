@@ -26,19 +26,15 @@ Any block with a collision shape can be part of a craft. Density comes from the 
 | Material | Density (kg/m³) |
 |---|---|
 | Wool | 55 |
-| Planks, bamboo mosaic, wooden fences | 480 |
+| Planks, bamboo mosaic | 480 |
 | Logs | 650 |
-| Dirt / sand / gravel | 1,350 / 1,600 / 1,700 |
-| Stone, concrete, ceramics, glass | 1,450 to 2,750 |
-| Stone ore / deepslate ore | 2,600 / 2,850 |
-| Coal / diamond blocks | 1,350 / 3,510 |
+| Dirt, clay, bricks | 1,350 to 1,950 |
+| Stone, concrete, terracotta, glass | 1,900 to 2,750 |
 | Copper | 8,960 |
 | Iron / gold | 7,870 / 19,300 |
-| Unknown solid material (including modded blocks) | 800 |
+| Anything else | 800 |
 
-Vanilla blocks without individual entries use the density of their material family, inferred from their registered block sound. The densities and block volumes are approximations. Blocks without physical shape (e.g. torches and redstone dust) and onboard water do not add mass.
-
-Slabs, stairs and other partial blocks are not treated as full cubes. Fences, walls and closed gates keep the vanilla 1.5-block barrier for players and mobs, but rigid crafts touch only their visible geometry. An open gate still has mass. Fences reconnect to their new neighbours when a craft is assembled or docked. Uniform blocks of a hull are merged into large collider boxes of the same mass so that bodies do not catch on the seams between blocks.
+Slabs, stairs, fences, carpets and every other shape collide with their real `VoxelShape`, not a full cube. Uniform blocks of a hull are merged into large collider boxes of the same mass so that bodies do not catch on the seams between blocks.
 
 ### Editing an assembled craft in motion
 
@@ -50,12 +46,14 @@ A craft does not have to be turned back into blocks to change it. The block unde
 - The client tells the server which block and face it saw, and the server accepts that if the block exists and is within reach. Clicks therefore are not lost while the craft moves and the client draws it a few ticks late.
 - **Left click** breaks a block. In **creative** mode it breaks at once (every 5 ticks while held), with no drop. In **survival** hold the button: cracks follow the block, and particles fly when it is hit and when it breaks. The time depends on the block's hardness and your tool, the tool wears, and the drop follows normal harvest rules. **A hit pushes the craft** along your view direction at the point of impact.
 - **Right click with a block in hand** places it in the neighbouring cell on the face you aim at. Slabs and stairs take the top or bottom half from the aim point. The first time a block goes into a new chunk of a craft, the client creates that chunk immediately, so you need not rejoin to see it.
-- A craft stays in one piece as long as its occupied cells touch, face to face, along an edge or at a corner. The physical shapes need not touch: two slabs in adjacent cells can belong to the same craft with air between their surfaces, and two blocks that meet only diagonally are one craft. If breaking a block disconnects part of a craft, that part becomes a **craft of its own** with the same velocity and spin. The largest piece stays the main craft. When the dimension has no free cells left, the extra pieces fall apart into item drops.
+- If breaking a block disconnects part of a craft, that part becomes a **craft of its own** with the same velocity and spin. The largest piece stays the main craft. When the dimension has no free cells left, the extra pieces fall apart into item drops.
 - The owner or an operator can break, place and use blocks. Any block the game allows can be placed, but not into terrain, a living entity or another craft, and an ordinary world block cannot be placed inside a craft.
 
 ### Players and mobs on board
 
-Players collide with the craft and are carried by its deck, but standing, walking and running into its side do not push, weigh down or tip it. Deliberate hits and the Tow Staff still move a craft. Mobs still load and push the hull based on their size. Assembling or placing a block refuses to overlap another craft, because the physics would throw both out.
+A player standing on a deck presses on the craft with their weight (70 kg for a player; for mobs the mass is estimated from their size). The load acts at the point under their feet, so a light craft tips at its edge. The acceleration of footsteps relative to the deck returns to the craft as an opposite impulse: on ice a light craft rolls back when you walk forward. Jumps and landings do not yet transfer a separate impulse.
+
+If you press into the side of a craft, the craft is **pushed**: up to 0.8 of the player's weight, at the contact point. A light craft on ice moves; a heavy one on the ground does not. Mobs push the same way. Assembling or placing a block refuses to overlap another craft, because the physics would throw both out.
 
 On slanted decks you walk along the surface without losing speed (up to about 60°), step up low ledges (up to 0.6 m), and do not slide down a slope while standing. Going down you stay attached to the surface. Blocks do not bounce when they fall (only slime is elastic); the solver is tuned so that after a 70 m/s impact the residual bounce is under 0.5 m/s. If the physics stops because of an error it restarts up to five times (operators get a message) without losing crafts or their blocks.
 
@@ -94,12 +92,10 @@ overrides = ["minecraft:packed_ice=0.015", "minecraft:oak_planks=0.82"]
 
 - **Units:** a block is a metre, time is in seconds, mass in kg, gravity 9.81 m/s². Mass and the inertia tensor come from the volumes and densities of the parts, and the centre of mass need not coincide with the visual centre. Densities are estimates of the materials.
 - **Contacts:** the world and crafts use the blocks' `VoxelShape`s, including slabs and stairs. Voids are not filled by a common shell. In a merged hull collider the friction is taken from the block under each contact point and not averaged over the deck; different restitution stays with separate colliders. A contact is predicted over the path of one substep, so a body stops at a surface: a cube at 80 m/s enters a wall by 3 cm. Exact motion checking (CCD) turns on when a body travels more than its half-thickness in a substep. A face covered by a neighbouring box gives no contact, so a hull does not catch on the seams of terrain and decks.
-- **People, mobs and drops:** obstacles are tested against the rotated shapes of the hull. You can stand on a deck and walk through real openings. Boarding and walking on a craft have no physical feedback for players; the weight and footsteps of mobs still act at the support point. A dropped item is carried by the deck but puts no such load on it. At very sharp turns the carrying between ticks stays approximate.
+- **People, mobs and drops:** obstacles are tested against the rotated shapes of the hull. You can stand on a deck and walk through real openings. The weight of a standing player or mob, and the reaction to their step, are applied to the hull at the support point. A dropped item is carried by the deck but puts no such load on it. At very sharp turns the carrying between ticks stays approximate.
 - **Air:** pressure grows with the square of the relative speed. Covered faces and covered parts of faces get no external force. This is a flat-plate drag model, not a simulation of air vortices.
 - **Water:** the engine intersects the rotated colliders with the filled part of the water cells. The volume and centre of the intersection give the buoyancy force `rho*g*V` and its moment. For a rotating box the drag is computed at several points of the submerged part, so water also brakes rotation about a fixed centre. Level and current come from Minecraft; this is an approximate drag model without waves or filling of cavities.
-- **Integration:** a game tick is `0.05 s`. For fast collisions, loads and water the engine uses four substeps of `0.0125 s`. If all active bodies move slowly on dry support with no extra load, the solver may take a single contact step. Sleeping bodies wake from a push, wind, or a change of support or water. An unloaded area and `/tick freeze` pause the simulation. Safety limits are `80 m/s` for the centre of mass and for any point of the hull, and `30 rad/s`: a large hull rotates slower so its edge does not exceed 80 m/s. With 48 or more active bodies the work is split across up to eight cores, leaving two for the game (the server's tick and the client's frame). A large group of touching bodies is solved by several threads at once: contacts that share no body run in parallel, and the solver stops at the same tolerance as on one thread.
-- **Off the server tick:** the engine steps on a thread of its own while the rest of the tick goes on, and crafts take its poses one tick later. If a step has not finished by the next tick (the server waits up to 15 ms for it), the game carries on and the crafts keep their poses: an overloaded engine runs in slow motion (`server.late` in `/aerolith perf` counts such ticks) instead of holding the server up. `-Daerolith.syncPhysics=true` steps on the server thread again.
-- **Tick budget:** when a step takes longer than 35 ms the solver is allowed a quarter fewer sweeps for the next one (never fewer than 16 per run, the normal limit is 200), and gets them back when steps are well within 40 ms again. Calm and small worlds never get near it. Settings by environment variable: `AEROLITH_TICK_BUDGET_MS` (`0` turns the limit off) and `AEROLITH_THREADS` (number of physics threads, `1` for none).
+- **Integration:** a game tick is `0.05 s`. For fast collisions, loads and water the engine uses four substeps of `0.0125 s`. If all active bodies move slowly on dry support with no extra load, the solver may take a single contact step. Sleeping bodies wake from a push, wind, or a change of support or water. An unloaded area and `/tick freeze` pause the simulation. Safety limits are `80 m/s` for the centre of mass and for any point of the hull, and `30 rad/s`: a large hull rotates slower so its edge does not exceed 80 m/s. With 48 or more active bodies the work is split across up to eight cores, leaving one for the game. A large group of touching bodies is solved by several threads at once: contacts that share no body run in parallel, and the solver stops at the same tolerance as on one thread.
 
 ## Craft blocks are real blocks
 
@@ -130,12 +126,11 @@ On an empty flat area **in a test world** take a baseline: run `/aerolith perf r
 
 - In the report `server.tick` is the server tick time (the budget is **50 ms** at 20 TPS), `server.native-step` is the Rust physics step including the JNI call, and `server.terrain` is the update of world colliders and water. These times are nested, not additive. Look at `n`, `avg` and `worst` separately for the fall and for the last third, when the rafts have usually come to rest. The synchronous creation of rafts is shown separately as `Spawn`.
 - `/aerolithperf` measures the CPU time of preparing the crafts for drawing, not FPS and not GPU time. It prints and resets only client-side measurements.
-- `AEROLITH_BENCH_CUBES=256 ./gradlew runGameTestServer` times whole server ticks with that many one-block rafts pushing each other (add `JAVA_TOOL_OPTIONS=-Daerolith.syncPhysics=true` to compare with the engine on the server thread).
 - `AEROLITH_BENCH=1 ./gradlew runGameTestServer` runs four scenarios without a client, including one 60×60 raft. The results are in the server log. `AEROLITH_PROFILE=1` at server start enables detailed Rust engine timings on stderr; leave it off when comparing ordinary performance.
 - To measure the Rust side alone: `cargo test --release --locked --manifest-path native/Cargo.toml bench_rafts -- --ignored --nocapture`.
 - For dense active contacts between one-block rafts, compile `tools/CubeRaftsBench.java` against the mod JAR and run it with JDK 25:
   ```sh
-  jar=build/libs/aerolith-0.4.7.jar
+  jar=build/libs/aerolith-0.4.8.jar
   javac -proc:none -cp "$jar" -d build/cube-bench tools/CubeRaftsBench.java
   java --enable-native-access=ALL-UNNAMED -cp "build/cube-bench:$jar" dev.aerolith.CubeRaftsBench 80 128 256 512
   ```

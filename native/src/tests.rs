@@ -2008,22 +2008,127 @@ fn lowered_flaps_add_lift_and_drag_and_do_not_stall_the_wing_sooner() {
 }
 
 #[test]
-fn the_solver_is_held_to_the_tick_budget_and_let_go_again() {
-    let budget = 0.035;
-    // Over budget: fewer sweeps every tick, but never fewer than the floor.
-    let mut sweeps = MAX_ITERATIONS;
-    for _ in 0..40 {
-        let next = next_sweeps(sweeps, 0.150, budget);
-        assert!(next < sweeps || next == MIN_ITERATIONS);
-        sweeps = next;
+fn sealed_cavity_buoyancy_floats_heavy_shell_without_interior_drag() {
+    let mut water = Vec::new();
+    for x in -4..=4 {
+        for y in -6..=0 {
+            for z in -4..=4 {
+                water.extend_from_slice(&[x as f64, y as f64, z as f64, 1., 0., 0., 0.]);
+            }
+        }
     }
-    assert_eq!(sweeps, MIN_ITERATIONS);
-    // Just inside the budget: left as it is. Well inside: back to the full number, and no further.
-    assert_eq!(next_sweeps(sweeps, 0.033, budget), sweeps);
-    for _ in 0..200 {
-        sweeps = next_sweeps(sweeps, 0.010, budget);
+    // 5x5x5 outer shell of 1600 kg/m³ enclosing a 3x3x3 sealed interior air cavity (27 m³):
+    // solid volume = 98 m³ (mass = 156,800 kg). Unsealed displaces <= 98 t and sinks;
+    // sealed displaces 125 t * g > 156.8? With density = 1200: solid = 117.6 t < 125 t (floats) > 98 t (sinks!).
+    let mut boxes = Vec::new();
+    let mut masses = Vec::new();
+    for x in -2_i32..=2 {
+        for y in -2_i32..=2 {
+            for z in -2_i32..=2 {
+                if x.abs() < 2 && y.abs() < 2 && z.abs() < 2 {
+                    continue;
+                }
+                boxes.extend_from_slice(&[f64::from(x), f64::from(y), f64::from(z), 0.5, 0.5, 0.5, 0.5, 0.0]);
+                masses.extend_from_slice(&[f64::from(x), f64::from(y), f64::from(z), 0.5, 0.5, 0.5, 1200.0]);
+            }
+        }
     }
-    assert_eq!(sweeps, MAX_ITERATIONS);
-    // No budget, no limit.
-    assert_eq!(next_sweeps(MIN_ITERATIONS, 1.0, 0.0), MAX_ITERATIONS);
+    let cavity = [0., 0., 0., 1.5, 1.5, 1.5];
+
+    let mut sealed = World::default();
+    sealed.water.replace(1, &water).unwrap();
+    sealed
+        .add_body_with_cavities(1, &state(0.5, -2.0, 0.5), &boxes, &[], &masses, &[], &cavity)
+        .unwrap();
+
+    let mut breached = World::default();
+    breached.water.replace(1, &water).unwrap();
+    breached
+        .add_body_with_cavities(1, &state(0.5, -2.0, 0.5), &boxes, &[], &masses, &[], &[])
+        .unwrap();
+
+    let sealed_out = run(&mut sealed, 1, 180);
+    let breached_out = run(&mut breached, 1, 180);
+    // Water surface is y = +1.0, hull height = 5.0 (half 2.5), mass = 117.6 t -> draft = 4.704 m -> COM_y_eq = -1.204 m.
+    assert!(
+        (sealed_out[1] + 1.204).abs() < 0.15 && sealed_out[8].abs() < 0.2,
+        "sealed hull should float near equilibrium y=-1.204, got y={} vy={}",
+        sealed_out[1],
+        sealed_out[8]
+    );
+    assert!(
+        breached_out[1] < -4.0,
+        "breached hull without sealed cavity must sink, got y={} vy={}",
+        breached_out[1],
+        breached_out[8]
+    );
+}
+
+#[test]
+fn face_skin_friction_damps_tangential_motion_and_smooth_stall_curve() {
+    let mut w = World::default();
+    // Long plate only with +/-Y faces: tangential airflow along +Z now creates skin-friction drag
+    // and spin about Y damps even though no X/Z face normal opposes it.
+    let top_bottom = [
+        0., 0., 0.5, 0., 0., 1., 0., 20.,
+        0., 0., -0.5, 0., 0., -1., 0., 20.,
+    ];
+    let mut s = state(0., 200., 0.);
+    s[9] = 40.0;
+    s[11] = 8.0;
+    w.add_uniform(1, &s, &CUBE, &top_bottom).unwrap();
+    let out = step(&mut w, ZERO, &[1]).unwrap();
+    assert!(
+        out[9] < 40.0,
+        "skin friction must slow tangential airflow along a plate: vz={}",
+        out[9]
+    );
+    assert!(
+        out[11] < 8.0,
+        "skin friction must damp spin parallel to large faces: wy={}",
+        out[11]
+    );
+
+    // Post-stall lift decays smoothly across 15° -> 45° without abrupt spikes.
+    let mut prev = f64::MAX;
+    for deg in 16..=45 {
+        let a = (deg as f64).to_radians();
+        let f = fluids::foil_force(Vec3::new(0.0, -a.sin(), a.cos()) * 30.0, Vec3::y(), Vec3::z());
+        let lift_mag = (f - Vec3::new(0.0, -a.sin(), a.cos())
+            * (f.dot(&Vec3::new(0.0, -a.sin(), a.cos()))))
+        .norm();
+        assert!(
+            lift_mag <= prev + 1.0e-6,
+            "lift jumped upward at {deg}°: {lift_mag} > {prev}"
+        );
+        prev = lift_mag;
+    }
+}
+
+#[test]
+fn floating_light_rafts_damp_spin_and_settle_without_spinning_up() {
+    let mut water = Vec::new();
+    for x in -4..=4 {
+        for y in -3..=0 {
+            for z in -4..=4 {
+                water.extend_from_slice(&[x as f64, y as f64, z as f64, 1., 0., 0., 0.]);
+            }
+        }
+    }
+    let mut w = World::default();
+    w.water.replace(1, &water).unwrap();
+    // 3x1x3 very light wool raft (55 kg/m³) given an initial small yaw + pitch disturbance in water.
+    let shape = [0., 0., 0., 1.5, 0.5, 1.5, 0.8, 0.0];
+    let mass = [0., 0., 0., 1.5, 0.5, 1.5, 55.0];
+    let mut s = state(0.5, 0.8, 0.5);
+    s[3] = 0.04;
+    s[6] = (1.0_f64 - 0.04 * 0.04).sqrt();
+    s[11] = 0.5;
+    w.add_body(1, &s, &shape, &[], &mass, &[]).unwrap();
+    let out = run(&mut w, 1, 200);
+    let spin = vec3(&out[10..13]).norm();
+    assert!(
+        spin < 0.08,
+        "floating light raft failed to damp spin or spun up: spin={spin}"
+    );
 }

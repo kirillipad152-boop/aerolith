@@ -1,13 +1,7 @@
 use std::{
     fmt::{Display, Error, Formatter},
-    sync::OnceLock,
     time::{Duration, Instant},
 };
-
-fn stage_timer_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("AEROLITH_STAGE_PROFILE").is_some())
-}
 
 /// A timer.
 #[derive(Copy, Clone, Debug, Default)]
@@ -33,7 +27,7 @@ impl Timer {
 
     /// Start the timer.
     pub fn start(&mut self) {
-        if cfg!(feature = "profiler") || stage_timer_enabled() {
+        if cfg!(feature = "profiler") {
             self.time = Duration::from_secs(0);
             self.start = Some(Instant::now());
         }
@@ -41,7 +35,7 @@ impl Timer {
 
     /// Pause the timer.
     pub fn pause(&mut self) {
-        if cfg!(feature = "profiler") || stage_timer_enabled() {
+        if cfg!(feature = "profiler") {
             if let Some(start) = self.start {
                 self.time += Instant::now().duration_since(start);
             }
@@ -51,7 +45,7 @@ impl Timer {
 
     /// Resume the timer.
     pub fn resume(&mut self) {
-        if cfg!(feature = "profiler") || stage_timer_enabled() {
+        if cfg!(feature = "profiler") {
             self.start = Some(Instant::now());
         }
     }

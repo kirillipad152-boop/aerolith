@@ -46,57 +46,17 @@ impl Accelerator {
         contacts: &mut SolverConstraintsSet<ContactConstraintTypes>,
         vels: &mut [SolverVel<Real>],
     ) {
-        let prof = crate::counters::SolverCounters::aerolith_stage_enabled();
-        let mut sweep_ns = 0u64;
-        let t_start = prof.then(std::time::Instant::now);
         contacts.init_nncg_slots::<D>(&mut self.one, &mut self.four);
-        if prof && D == 3 {
-            crate::counters::SolverCounters::aerolith_add(18, self.one.len() as u64 * 3);
-            crate::counters::SolverCounters::aerolith_add(19, self.four.len() as u64 * 3);
-        }
         self.vels.clear();
         self.vels.extend_from_slice(vels);
         self.vel_direction.clear();
         let mut has_p = false;
         let mut last = Real::MAX;
-        let mut stiffened_early = 0usize;
         for i in 1..=most {
-            let t_sweep = prof.then(std::time::Instant::now);
             let (changed, fastest) =
                 contacts.sweep_and_measure::<D>(vels, &mut self.one, &mut self.four, !has_p);
-            if let Some(ts) = t_sweep {
-                sweep_ns += ts.elapsed().as_nanos() as u64;
-            }
             if i == most || fastest <= tolerance {
-                if let Some(t0) = t_start {
-                    let total_ns = t0.elapsed().as_nanos() as u64;
-                    if D == 3 {
-                        crate::counters::SolverCounters::aerolith_add(12, 1);
-                        crate::counters::SolverCounters::aerolith_add(13, i as u64);
-                        crate::counters::SolverCounters::aerolith_add(4, total_ns);
-                        crate::counters::SolverCounters::aerolith_add(5, sweep_ns);
-                        crate::counters::SolverCounters::aerolith_add(
-                            6,
-                            total_ns.saturating_sub(sweep_ns),
-                        );
-                    } else {
-                        crate::counters::SolverCounters::aerolith_add(15, 1);
-                        crate::counters::SolverCounters::aerolith_add(16, i as u64);
-                        crate::counters::SolverCounters::aerolith_add(9, total_ns);
-                        crate::counters::SolverCounters::aerolith_add(17, sweep_ns);
-                    }
-                }
                 return;
-            }
-            let stiff_reset =
-                D == 3 && (i == 6 || i == 16 || i == 32) && stiffened_early < 3 && contacts.stiffen();
-            if stiff_reset {
-                stiffened_early += 1;
-                has_p = false;
-                last = Real::MAX;
-                contacts.advance_nncg::<D>(&mut self.one, &mut self.four, 0.0, true);
-                self.vels.copy_from_slice(vels);
-                continue;
             }
             if !has_p {
                 // `sweep_and_measure` already initialized `slot.p = d` and `slot.old = now`.
@@ -162,9 +122,7 @@ struct ParallelCoordState {
     accel_vel_dir: SyncPtr<SolverVel<Real>>,
     has_p: bool,
     last: Real,
-    stiffened_early: usize,
     restarts: usize,
-    run_start: Option<std::time::Instant>,
 }
 
 impl ParallelCoordState {
@@ -255,8 +213,6 @@ impl VelocitySolver {
         joint_constraints: &mut SolverConstraintsSet<JointConstraintTypes>,
         min_par_constraints: usize,
     ) {
-        let t0 = crate::counters::SolverCounters::aerolith_stage_enabled()
-            .then(std::time::Instant::now);
         contact_constraints.init_colored(
             island_id,
             islands,
@@ -275,9 +231,6 @@ impl VelocitySolver {
             joints_all,
             joint_indices,
         );
-        if let Some(t0) = t0 {
-            crate::counters::SolverCounters::aerolith_add(0, t0.elapsed().as_nanos() as u64);
-        }
     }
 
     pub fn init_constraints(
@@ -293,8 +246,6 @@ impl VelocitySolver {
         contact_constraints: &mut SolverConstraintsSet<ContactConstraintTypes>,
         joint_constraints: &mut SolverConstraintsSet<JointConstraintTypes>,
     ) {
-        let t0 = crate::counters::SolverCounters::aerolith_stage_enabled()
-            .then(std::time::Instant::now);
         contact_constraints.init(
             island_id,
             islands,
@@ -312,9 +263,6 @@ impl VelocitySolver {
             joints_all,
             joint_indices,
         );
-        if let Some(t0) = t0 {
-            crate::counters::SolverCounters::aerolith_add(0, t0.elapsed().as_nanos() as u64);
-        }
     }
 
     pub fn init_solver_velocities_and_solver_bodies(
@@ -416,13 +364,8 @@ impl VelocitySolver {
             && joint_constraints.one_body_interactions.is_empty()
             && joint_constraints.generic_two_body_interactions.is_empty()
             && joint_constraints.generic_one_body_interactions.is_empty();
-        let force_one = std::env::var_os("AEROLITH_FORCE_PAR1").is_some();
-        let threads = if force_one {
-            1
-        } else {
-            rayon::current_num_threads().min(MAX_WORKERS)
-        };
-        if (threads < 2 && !force_one)
+        let threads = rayon::current_num_threads().min(MAX_WORKERS);
+        if threads < 2
             || !self.multibody_roots.is_empty()
             || !no_joints
             || !contact_constraints.can_run_parallel()
@@ -484,13 +427,10 @@ impl VelocitySolver {
             accel_vel_dir: SyncPtr::from_slice(&mut self.accelerator.vel_direction),
             has_p: false,
             last: Real::MAX,
-            stiffened_early: 0,
             restarts: 0,
-            run_start: None,
         };
         let sync = TeamSync::new(threads, coord);
         let empty_multibodies = MultibodyJointSet::new();
-        let prof = crate::counters::SolverCounters::aerolith_stage_enabled();
         let most = params.max_internal_iterations;
         let tol = params.internal_velocity_tolerance;
 
@@ -548,7 +488,6 @@ impl VelocitySolver {
                             most,
                             tol,
                             true,
-                            prof,
                             &mut gen,
                         );
                     }
@@ -588,7 +527,6 @@ impl VelocitySolver {
                             most,
                             tol,
                             false,
-                            prof,
                             &mut gen,
                         );
                     }
@@ -625,7 +563,6 @@ impl VelocitySolver {
     ) {
         for substep_id in 0..num_substeps {
             let is_last_substep = substep_id == num_substeps - 1;
-            let prof = crate::counters::SolverCounters::aerolith_stage_enabled();
 
             for (solver_vels, incr) in self
                 .solver_vels
@@ -641,19 +578,11 @@ impl VelocitySolver {
             /*
              * Update & solve constraints.
              */
-            let t0 = prof.then(std::time::Instant::now);
             joint_constraints.update(params, multibodies, &self.solver_bodies);
             contact_constraints.update(params, substep_id, multibodies, &self.solver_bodies);
-            if let Some(t) = t0 {
-                crate::counters::SolverCounters::aerolith_add(2, t.elapsed().as_nanos() as u64);
-            }
 
-            let t0 = prof.then(std::time::Instant::now);
             if params.warmstart_coefficient != 0.0 {
                 contact_constraints.warmstart(&mut self.solver_vels, &mut self.generic_solver_vels);
-            }
-            if let Some(t) = t0 {
-                crate::counters::SolverCounters::aerolith_add(3, t.elapsed().as_nanos() as u64);
             }
 
             for _ in 0..params.num_internal_pgs_iterations {
@@ -667,16 +596,7 @@ impl VelocitySolver {
                     &mut self.solver_vels,
                 );
                 // An impact is carried by contacts that had nothing to carry before.
-                let ts = prof.then(std::time::Instant::now);
-                let more = contact_constraints.stiffen();
-                if let Some(ts) = ts {
-                    crate::counters::SolverCounters::aerolith_add(
-                        7,
-                        ts.elapsed().as_nanos() as u64,
-                    );
-                    crate::counters::SolverCounters::aerolith_add(14, 1);
-                }
-                if !more {
+                if !contact_constraints.stiffen() {
                     break;
                 }
             }
@@ -691,11 +611,7 @@ impl VelocitySolver {
             /*
              * Integrate positions.
              */
-            let t0 = prof.then(std::time::Instant::now);
             self.integrate_positions(params, is_last_substep, bodies, multibodies);
-            if let Some(t) = t0 {
-                crate::counters::SolverCounters::aerolith_add(8, t.elapsed().as_nanos() as u64);
-            }
 
             /*
              * Resolution without bias.
@@ -714,15 +630,8 @@ impl VelocitySolver {
                     &mut self.solver_vels,
                 );
 
-                let t0 = prof.then(std::time::Instant::now);
                 contact_constraints
                     .solve_friction(&mut self.solver_vels, &mut self.generic_solver_vels);
-                if let Some(t) = t0 {
-                    crate::counters::SolverCounters::aerolith_add(
-                        10,
-                        t.elapsed().as_nanos() as u64,
-                    );
-                }
             }
         }
     }
@@ -852,7 +761,6 @@ unsafe fn run_accel_parallel<const D: usize>(
     most: usize,
     tol: Real,
     do_stiffen: bool,
-    prof: bool,
     gen: &mut usize,
 ) {
     let plan = actx.plan;
@@ -874,9 +782,7 @@ unsafe fn run_accel_parallel<const D: usize>(
         let s = &mut shared.state;
         s.has_p = false;
         s.last = Real::MAX;
-        s.stiffened_early = 0;
         s.restarts = 0;
-        s.run_start = prof.then(std::time::Instant::now);
         let vels = s.vels.slice_mut(0..s.vels_len);
         s.accel_vels.slice_mut(0..s.vels_len).copy_from_slice(vels);
         shared.sweep_action = SweepAction::Continue {
@@ -926,7 +832,6 @@ unsafe fn run_accel_parallel<const D: usize>(
 
         let vptr = sync.read_shared().state.vels;
         let (mut local_c, mut local_f) = (0.0, 0.0 as Real);
-        let tw = prof.then(std::time::Instant::now);
         for (c_idx, &group) in plan.parallel_colors.iter().enumerate() {
             #[cfg(feature = "simd-is-enabled")]
             let (cc, ff) = actx.cptrs.sweep_color::<D>(
@@ -958,11 +863,6 @@ unsafe fn run_accel_parallel<const D: usize>(
             local_f = local_f.max(ff);
             if c_idx + 1 < num_par {
                 sync.barrier(gen);
-            }
-        }
-        if tid == 0 {
-            if let Some(t) = tw {
-                crate::counters::SolverCounters::aerolith_add(6, t.elapsed().as_nanos() as u64);
             }
         }
 
@@ -1001,43 +901,10 @@ unsafe fn run_accel_parallel<const D: usize>(
 
             let s = &mut shared.state;
             if iter == most || fastest <= tol {
-                if let Some(t0) = s.run_start {
-                    let ns = t0.elapsed().as_nanos() as u64;
-                    if D == 3 {
-                        crate::counters::SolverCounters::aerolith_add(12, 1);
-                        crate::counters::SolverCounters::aerolith_add(13, iter as u64);
-                        crate::counters::SolverCounters::aerolith_add(4, ns);
-                        crate::counters::SolverCounters::aerolith_add(5, ns);
-                    } else {
-                        crate::counters::SolverCounters::aerolith_add(15, 1);
-                        crate::counters::SolverCounters::aerolith_add(16, iter as u64);
-                        crate::counters::SolverCounters::aerolith_add(9, ns);
-                        crate::counters::SolverCounters::aerolith_add(17, ns);
-                    }
-                }
                 if do_stiffen {
                     shared.stiffen_more = actx.cptrs.stiffen_all();
                 }
                 shared.sweep_action = SweepAction::Done;
-                return;
-            }
-
-            let stiff_reset = D == 3
-                && (iter == 6 || iter == 16 || iter == 32)
-                && s.stiffened_early < 3
-                && actx.cptrs.stiffen_all();
-            if stiff_reset {
-                s.stiffened_early += 1;
-                s.has_p = false;
-                s.last = Real::MAX;
-                let vels = s.vels_mut();
-                s.accel_vels.slice_mut(0..s.vels_len).copy_from_slice(vels);
-                adv_tail::<D>(actx, 0.0, true);
-                shared.sweep_action = SweepAction::Continue {
-                    beta: 0.0,
-                    restart: true,
-                    init_p: true,
-                };
                 return;
             }
 

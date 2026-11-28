@@ -31,16 +31,18 @@ final class Hull {
     static final double DEFAULT_DENSITY = 800.0;
     private static final Direction[] FACES = Direction.values();
     private static final AABB[] NO_BOXES = {};
+    private static final double[] NO_DOUBLES = {};
 
     volatile List<CraftBlock> blocks;
     final Vec3 localCom;
     final double radius;
     final double mass;
+    final double cavityVolume;
     final AABB localBounds;
     final List<AABB> collisionBoxes;
-    final BoxIndex bodyBoxes;
     private final List<Part> parts;
     final double[] surfaces;
+    final double[] cavities;
 
     private record Part(CraftBlock owner, AABB box, double density) {}
 
@@ -58,19 +60,15 @@ final class Hull {
         boolean singleBlock = blocks.size() == 1;
         var cells = singleBlock ? null : new Long2ObjectOpenHashMap<AABB[]>(blocks.size());
         var fullBlocks = singleBlock ? null : new it.unimi.dsi.fastutil.longs.LongOpenHashSet(blocks.size());
+        int sealCount = 0;
+        int sealMinX = Integer.MAX_VALUE, sealMinY = Integer.MAX_VALUE, sealMinZ = Integer.MAX_VALUE;
+        int sealMaxX = Integer.MIN_VALUE, sealMaxY = Integer.MIN_VALUE, sealMaxZ = Integer.MIN_VALUE;
         List<Part> parts = new ArrayList<>(blocks.size());
         List<Part> pickParts = new ArrayList<>();
-        List<AABB> movement = null;
         for (CraftBlock block : blocks) {
             BlockPos p = block.offset();
             double x = p.getX() - 0.5, y = p.getY() - 0.5, z = p.getZ() - 0.5;
             List<AABB> shapes = Materials.boxes(block.state());
-            List<AABB> entityShapes = Materials.entityBoxes(block.state());
-            if (movement == null && entityShapes != shapes) {
-                movement = new ArrayList<>(blocks.size());
-                for (Part part : parts) movement.add(part.box);
-            }
-            if (movement != null) for (AABB box : entityShapes) movement.add(box.move(x, y, z));
             if (shapes.isEmpty()) {
                 for (AABB b : Materials.outline(block.state())) pickParts.add(new Part(block, b.move(x, y, z), 0.0));
                 continue;
@@ -85,6 +83,15 @@ final class Hull {
                 long key = p.asLong();
                 cells.put(key, boxes);
                 if (Materials.isFullBlock(block.state())) fullBlocks.add(key);
+                if (Materials.sealsCavity(block.state())) {
+                    sealCount++;
+                    sealMinX = Math.min(sealMinX, p.getX());
+                    sealMinY = Math.min(sealMinY, p.getY());
+                    sealMinZ = Math.min(sealMinZ, p.getZ());
+                    sealMaxX = Math.max(sealMaxX, p.getX());
+                    sealMaxY = Math.max(sealMaxY, p.getY());
+                    sealMaxZ = Math.max(sealMaxZ, p.getZ());
+                }
             }
         }
         List<Part> fluidParts = fluids.isEmpty() ? List.of() : new ArrayList<>(fluids.size());
@@ -97,8 +104,7 @@ final class Hull {
         this.parts = List.copyOf(parts);
         List<AABB> cBoxes = new ArrayList<>(parts.size());
         for (Part part : parts) cBoxes.add(part.box);
-        this.bodyBoxes = new BoxIndex(cBoxes);
-        collisionBoxes = movement == null ? bodyBoxes : new BoxIndex(movement);
+        collisionBoxes = new BoxIndex(cBoxes);
         DoubleArrayList surfaces = new DoubleArrayList(blocks.size() * 12);
         Vec3 weighted = Vec3.ZERO;
         double kg = 0.0;
@@ -112,19 +118,19 @@ final class Hull {
         }
 
         if (singleBlock) {
+            CraftBlock only = blocks.getFirst();
             AABB[] own = parts.isEmpty() ? NO_BOXES : new AABB[parts.size()];
             for (int i = 0; i < parts.size(); i++) own[i] = parts.get(i).box;
-            for (AABB box : own) {
-                for (Direction face : FACES) exposedFace(surfaces, box, face, own, NO_BOXES);
-            }
+            emitBlockSurfaces(surfaces, only, own, null, null);
         } else {
             for (CraftBlock block : blocks) {
                 BlockPos p = block.offset();
                 long key = p.asLong();
                 AABB[] own = cells.get(key);
-                if (own == null) continue;
-                boolean full = fullBlocks.contains(key);
-                if (full
+                Materials.AeroProperty aero = Materials.aero(block.state());
+                if (own == null && aero == null) continue;
+                boolean full = own != null && fullBlocks.contains(key);
+                if (aero == null && full
                         && fullBlocks.contains(BlockPos.offset(key, 1, 0, 0))
                         && fullBlocks.contains(BlockPos.offset(key, -1, 0, 0))
                         && fullBlocks.contains(BlockPos.offset(key, 0, 1, 0))
@@ -134,28 +140,93 @@ final class Hull {
                     // Completely surrounded full block has no exposed exterior faces.
                     continue;
                 }
-                for (AABB box : own) {
-                    for (Direction face : FACES) {
-                        long nKey = neighborKey(p, face);
-                        if (full && fullBlocks.contains(nKey)) continue;
-                        exposedFace(surfaces, box, face, own, cells.getOrDefault(nKey, NO_BOXES));
-                    }
-                }
+                emitBlockSurfaces(surfaces, block, own == null ? NO_BOXES : own, full ? fullBlocks : null, cells);
             }
         }
         if (kg <= 0.0 || bounds == null) throw new IllegalArgumentException("A hull needs at least one solid block");
         this.mass = kg;
         this.localCom = weighted.scale(1.0 / kg);
         double extent = 0;
-        for (AABB box : bodyBoxes) {
+        for (AABB box : collisionBoxes) {
             Vec3 d = box.getCenter().subtract(localCom);
             extent = Math.max(extent, new Vec3(Math.abs(d.x) + box.getXsize() * 0.5,
                     Math.abs(d.y) + box.getYsize() * 0.5, Math.abs(d.z) + box.getZsize() * 0.5).length());
         }
         this.radius = extent;
-        if (movement != null) for (AABB box : movement) bounds = bounds.minmax(box);
         this.localBounds = bounds;
         this.surfaces = surfaces.toDoubleArray();
+        if (!singleBlock && sealCount >= 6
+                && (sealMaxX - sealMinX >= 2)
+                && (sealMaxY - sealMinY >= 2)
+                && (sealMaxZ - sealMinZ >= 2)) {
+            SealedCavities.Result result = SealedCavities.find(
+                    blocks, fluids, cells, sealMinX, sealMinY, sealMinZ, sealMaxX, sealMaxY, sealMaxZ);
+            this.cavities = result.boxes();
+            this.cavityVolume = result.volume();
+        } else {
+            this.cavities = NO_DOUBLES;
+            this.cavityVolume = 0.0;
+        }
+    }
+
+    private static void emitBlockSurfaces(
+            DoubleArrayList surfaces,
+            CraftBlock block,
+            AABB[] own,
+            it.unimi.dsi.fastutil.longs.LongOpenHashSet fullBlocks,
+            Long2ObjectOpenHashMap<AABB[]> cells
+    ) {
+        BlockPos p = block.offset();
+        Materials.AeroProperty aero = Materials.aero(block.state());
+        Direction skipFoilAxis = null;
+        if (aero != null && aero.surfaceKind() != 0) {
+            Vec3 center = Vec3.atLowerCornerOf(p);
+            if (aero.surfaceKind() == 2) {
+                surface(surfaces, 2, center, aero.direction(), aero.magnitude());
+            } else {
+                double areaFactor = aero.perArea() ? exposedPlanformArea(own, aero.direction(), p, cells) : 1.0;
+                if (areaFactor > 1.0e-8) {
+                    surface(surfaces, aero.surfaceKind(), center, aero.direction(), aero.magnitude() * areaFactor);
+                }
+                skipFoilAxis = Direction.getApproximateNearest(aero.direction().x, aero.direction().y, aero.direction().z);
+            }
+        }
+        for (AABB box : own) {
+            for (Direction face : FACES) {
+                if (skipFoilAxis != null && face.getAxis() == skipFoilAxis.getAxis()) continue;
+                long nKey = neighborKey(p, face);
+                if (fullBlocks != null && fullBlocks.contains(nKey)) continue;
+                AABB[] adjacent = cells == null ? NO_BOXES : cells.getOrDefault(nKey, NO_BOXES);
+                exposedFace(surfaces, box, face, own, adjacent);
+            }
+        }
+    }
+
+    private static double exposedPlanformArea(
+            AABB[] own, Vec3 dir, BlockPos p, Long2ObjectOpenHashMap<AABB[]> cells
+    ) {
+        if (own.length == 0) return 1.0;
+        Direction face = Direction.getApproximateNearest(dir.x, dir.y, dir.z);
+        Direction.Axis axis = face.getAxis();
+        Direction.Axis u = axis == Direction.Axis.X ? Direction.Axis.Y : Direction.Axis.X;
+        Direction.Axis v = axis == Direction.Axis.Z ? Direction.Axis.Y : Direction.Axis.Z;
+        double area = 0.0;
+        for (AABB box : own) area += (box.max(u) - box.min(u)) * (box.max(v) - box.min(v));
+        if (cells == null) return area;
+        AABB[] above = cells.get(neighborKey(p, face));
+        AABB[] below = cells.get(neighborKey(p, face.getOpposite()));
+        return (above != null && above.length > 0 && below != null && below.length > 0) ? 0.0 : area;
+    }
+
+    private static void surface(DoubleArrayList data, int kind, Vec3 point, Vec3 dir, double magnitude) {
+        data.add(kind);
+        data.add(point.x);
+        data.add(point.y);
+        data.add(point.z);
+        data.add(dir.x);
+        data.add(dir.y);
+        data.add(dir.z);
+        data.add(magnitude);
     }
 
     /**
@@ -360,7 +431,7 @@ final class Hull {
         Pick best = null;
         Vec3 end = origin.add(direction.scale(reach));
         // Solid parts are found through the index; the rest are few.
-        for (int index : bodyBoxes.near(new AABB(origin, end).inflate(1.0e-6))) {
+        for (int index : ((BoxIndex) collisionBoxes).near(new AABB(origin, end).inflate(1.0e-6))) {
             best = closer(best, parts.get(index), origin, end);
         }
         for (Part part : pickParts) best = closer(best, part, origin, end);
@@ -386,16 +457,8 @@ final class Hull {
         return faces[best];
     }
 
-    /**
-     * Groups of block cells that touch: face to face, and also along an edge or at a corner, so two blocks that meet only
-     * diagonally stay one craft. Face contact is tried first because it is what nearly every craft has and is much cheaper.
-     */
+    /** Groups of blocks that touch face to face. */
     static List<List<CraftBlock>> components(List<CraftBlock> blocks) {
-        List<List<CraftBlock>> groups = components(blocks, false);
-        return groups.size() > 1 ? components(blocks, true) : groups;
-    }
-
-    private static List<List<CraftBlock>> components(List<CraftBlock> blocks, boolean diagonals) {
         var pending = new Long2ObjectOpenHashMap<CraftBlock>(blocks.size());
         for (CraftBlock block : blocks) pending.put(block.offset().asLong(), block);
         List<List<CraftBlock>> groups = new ArrayList<>();
@@ -404,22 +467,10 @@ final class Hull {
             List<CraftBlock> group = new ArrayList<>();
             group.add(first);
             for (int i = 0; i < group.size(); i++) {
-                long key = group.get(i).offset().asLong();
-                if (!diagonals) {
-                    for (Direction face : FACES) {
-                        CraftBlock next = pending.remove(BlockPos.offset(key, face.getStepX(), face.getStepY(), face.getStepZ()));
-                        if (next != null) group.add(next);
-                    }
-                    continue;
-                }
-                for (int dx = -1; dx <= 1; dx++) {
-                    for (int dy = -1; dy <= 1; dy++) {
-                        for (int dz = -1; dz <= 1; dz++) {
-                            if (dx == 0 && dy == 0 && dz == 0) continue;
-                            CraftBlock next = pending.remove(BlockPos.offset(key, dx, dy, dz));
-                            if (next != null) group.add(next);
-                        }
-                    }
+                BlockPos offset = group.get(i).offset();
+                for (Direction face : FACES) {
+                    CraftBlock next = pending.remove(neighborKey(offset, face));
+                    if (next != null) group.add(next);
                 }
             }
             groups.add(group);
@@ -431,12 +482,28 @@ final class Hull {
         return BlockPos.asLong(p.getX() + face.getStepX(), p.getY() + face.getStepY(), p.getZ() + face.getStepZ());
     }
 
-    /** Whether the blocks form one group by the adjacency of {@link #components}; the same rule for assembly. */
     static boolean connected(List<CraftBlock> blocks) {
-        if (blocks.isEmpty()) return false;
-        var cells = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(blocks.size());
-        for (CraftBlock block : blocks) cells.add(block.offset().asLong());
-        return cells.size() == blocks.size() && components(blocks).size() == 1;
+        Set<BlockPos> remaining = new HashSet<>();
+        for (CraftBlock block : blocks) {
+            remaining.add(block.offset());
+        }
+        if (remaining.isEmpty() || remaining.size() != blocks.size()) {
+            return false;
+        }
+        ArrayDeque<BlockPos> queue = new ArrayDeque<>();
+        BlockPos first = blocks.getFirst().offset();
+        queue.add(first);
+        remaining.remove(first);
+        while (!queue.isEmpty()) {
+            BlockPos p = queue.remove();
+            for (Direction face : FACES) {
+                BlockPos next = p.relative(face);
+                if (remaining.remove(next)) {
+                    queue.add(next);
+                }
+            }
+        }
+        return remaining.isEmpty();
     }
 
     static boolean validOffset(BlockPos offset) {

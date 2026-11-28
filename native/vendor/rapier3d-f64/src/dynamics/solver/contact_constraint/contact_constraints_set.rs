@@ -568,16 +568,6 @@ impl ContactConstraintsSet {
             manifolds,
             &self.one_body_interactions,
         );
-
-        static NOSIMD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *NOSIMD.get_or_init(|| std::env::var_os("AEROLITH_NOSIMD").is_some()) {
-            self.interaction_groups
-                .nongrouped_interactions
-                .append(&mut self.interaction_groups.simd_interactions);
-            self.one_body_interaction_groups
-                .nongrouped_interactions
-                .append(&mut self.one_body_interaction_groups.simd_interactions);
-        }
     }
 
     pub fn init(
@@ -615,18 +605,6 @@ impl ContactConstraintsSet {
         manifold_indices: &[ContactManifoldIndex],
         min_par_constraints: usize,
     ) {
-        static NOSIMD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *NOSIMD.get_or_init(|| std::env::var_os("AEROLITH_NOSIMD").is_some()) {
-            return self.init(
-                island_id,
-                islands,
-                bodies,
-                multibody_joints,
-                manifolds,
-                manifold_indices,
-            );
-        }
-
         self.clear_constraints();
         self.clear_builders();
 
@@ -707,15 +685,12 @@ impl ContactConstraintsSet {
                     });
                 }
             }
-            static CHECK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            if cfg!(debug_assertions)
-                || *CHECK.get_or_init(|| std::env::var_os("AEROLITH_CHECK").is_some())
-            {
-                self.assert_colors_disjoint();
-            }
+            #[cfg(debug_assertions)]
+            self.assert_colors_disjoint();
         }
     }
 
+    #[cfg(debug_assertions)]
     fn assert_colors_disjoint(&self) {
         let mut seen = std::collections::HashSet::new();
         for (ci, group) in self.color_plan.parallel_colors.iter().enumerate() {

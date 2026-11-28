@@ -18,7 +18,14 @@ final class NativePhysics {
     // Pose: origin xyz, quaternion xyzw, COM velocity xyz and world angular velocity xyz.
     // A box adds half extents, friction and restitution to its local center; -1 friction consumes its grid (X fastest, then Y, Z).
     // A mass adds half extents and density to its own; masses have no shape to collide with.
-    static native long addBody(long world, double[] state, double[] boxes, double[] frictionCells, double[] masses, double[] surfaces);
+    static long addBody(long world, double[] state, double[] boxes, double[] frictionCells, double[] masses, double[] surfaces) {
+        return addBodyWithCavities(world, state, boxes, frictionCells, masses, surfaces, NO_CAVITIES);
+    }
+
+    private static final double[] NO_CAVITIES = {};
+
+    static native long addBodyWithCavities(long world, double[] state, double[] boxes, double[] frictionCells,
+            double[] masses, double[] surfaces, double[] cavities);
     static native void removeBody(long world, long body);
     static native void setActive(long world, long body, boolean active);
     static native void setThrottle(long world, long body, double throttle);

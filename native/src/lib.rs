@@ -52,6 +52,7 @@ const MAX_MEDIUM_SPEED: f64 = 1000.0;
 const SUBSTEPS: usize = 4;
 const TICK: f64 = 0.05;
 /// Bodies move in steps of this length whether the engine looks for contacts once a tick or every time.
+#[cfg(test)]
 const DT: f64 = TICK / SUBSTEPS as f64;
 /// Slower than this (m/s, any point), bodies in contact are simulated in whole ticks. Coming down on something at this
 /// speed means less than 5 cm of overlap before the solver sees it.
@@ -60,38 +61,6 @@ const CALM_SPEED: f64 = 1.0;
 /// many times. A light body under a thousand times its weight takes a few dozen, most take one.
 const CONTACT_TOLERANCE: f64 = 0.003;
 const MAX_ITERATIONS: usize = 200;
-/// A solver run that has to be held to the tick budget still makes this many sweeps.
-const MIN_ITERATIONS: usize = 16;
-/// A tick of the engine should take no longer than this (seconds; a tick of the game is 50 ms and the server waits up to 15 ms more), or the solver is allowed fewer sweeps for the next ones,
-/// until it fits again. `AEROLITH_TICK_BUDGET_MS=0` turns this off. Calm and small worlds never come near it.
-static TICK_BUDGET: LazyLock<f64> = LazyLock::new(|| {
-    std::env::var("AEROLITH_TICK_BUDGET_MS")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .map_or(0.035, |ms| (ms / 1000.0).clamp(0.0, 10.0))
-});
-
-/// How many sweeps one solver run may make in the next tick, given how long the last one took: fewer when over the budget
-/// (by a quarter each tick), and back to more, slowly, when it is well within. A budget of zero never limits.
-fn next_sweeps(sweeps: usize, spent: f64, budget: f64) -> usize {
-    if budget <= 0.0 {
-        MAX_ITERATIONS
-    } else if spent > budget {
-        (sweeps - sweeps / 4).clamp(MIN_ITERATIONS, MAX_ITERATIONS)
-    } else if spent < budget * 0.7 {
-        (sweeps + sweeps / 8 + 1).clamp(MIN_ITERATIONS, MAX_ITERATIONS)
-    } else {
-        sweeps
-    }
-}
-
-struct Sweeps(usize);
-
-impl Default for Sweeps {
-    fn default() -> Self {
-        Self(MAX_ITERATIONS)
-    }
-}
 /// The deepest a resting contact is pressed in by what it carries, in metres.
 const CONTACT_SAG: f64 = 0.002;
 /// Fewer awake bodies than this are faster done by one thread than handed around.
@@ -236,6 +205,8 @@ struct Craft {
     id: i64,
     handle: RigidBodyHandle,
     boxes: Vec<BoxShape>,
+    /// Sealed interior cavity boxes that displace water for buoyancy without colliding or adding interior drag.
+    cavity_boxes: Vec<BoxShape>,
     surfaces: Vec<Surface>,
     /// Equivalent forces at the area centroids in uniform air, for pure translation only.
     translation_surfaces: Vec<Surface>,
@@ -268,18 +239,9 @@ struct Profile {
     wakes: u32,
 }
 
-/// Shared by all worlds, and two cores are left for the game.
+/// Shared by all worlds, and one core is left for the game.
 static WORKERS: LazyLock<Option<ThreadPool>> = LazyLock::new(|| {
-    // Two cores are left for the game, the server's tick and the client's frame: workers that spin at barriers while those run
-    // on their cores lose far more than a third worker brings (4 cores: 3 workers 114 ms, 2 workers 46 ms a step with the game
-    // busy). AEROLITH_THREADS sets the number outright; 1 turns the worker pool off.
-    let threads = std::env::var("AEROLITH_THREADS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .map_or_else(
-            || std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(2).clamp(1, 8)),
-            |n| n.clamp(1, 16),
-        );
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).clamp(1, 8));
     ThreadPoolBuilder::new()
         .num_threads(threads.min(8))
         .thread_name(|i| format!("aerolith-physics-{i}"))
@@ -307,8 +269,6 @@ fn with_workers(bodies: usize, work: impl FnOnce() + Send) {
 #[derive(Default)]
 struct World {
     profile: Profile,
-    /// The most sweeps a solver run may make; lowered while ticks take longer than the budget.
-    sweeps: Sweeps,
     /// Bodies or colliders were added, removed or replaced since the last tick, so the engine has to look at them once.
     dirty: bool,
     crafts: Crafts,
@@ -337,9 +297,23 @@ impl World {
         id: i64,
         state: &[f64],
         boxes: &[f64],
+        friction_cells: &[f64],
+        masses: &[f64],
+        surfaces: &[f64],
+    ) -> Result<()> {
+        self.add_body_with_cavities(id, state, boxes, friction_cells, masses, surfaces, &[])
+    }
+
+    /// Like [`Self::add_body`], plus sealed interior air cavity prisms (`cx, cy, cz, hx, hy, hz`).
+    fn add_body_with_cavities(
+        &mut self,
+        id: i64,
+        state: &[f64],
+        boxes: &[f64],
         mut friction_cells: &[f64],
         masses: &[f64],
         surfaces: &[f64],
+        cavities: &[f64],
     ) -> Result<()> {
         if self.crafts.len() >= MAX_BODIES {
             return Err(Fault::State("world body limit reached"));
@@ -393,6 +367,10 @@ impl World {
         if !friction_cells.is_empty() {
             return Err(Fault::Argument("unused friction cells"));
         }
+        let cavity_boxes: Vec<BoxShape> = records::<6>(cavities, MAX_BOXES)?
+            .iter()
+            .map(|c| BoxShape::parse(c, MAX_LOCAL_COORD, MAX_LOCAL_COORD))
+            .collect::<Result<_>>()?;
         let mass = mass_properties(records::<7>(masses, MAX_PARTS)?)?;
         let surfaces: Vec<_> = records::<8>(surfaces, MAX_SURFACES)?
             .iter()
@@ -432,6 +410,7 @@ impl World {
             .sum();
         let radius = boxes
             .iter()
+            .chain(cavity_boxes.iter())
             .map(|b| (b.center - com).norm() + b.half.norm())
             .chain(surfaces.iter().map(|s| (s.point - com).norm()))
             .fold(0.0, f64::max);
@@ -448,6 +427,7 @@ impl World {
             loads: Vec::new(),
             handle,
             boxes,
+            cavity_boxes,
             translation_surfaces: fluids::translation_surfaces(&surfaces),
             surfaces,
             frozen: None,
@@ -724,7 +704,6 @@ impl World {
                 self.profile.wakes += 1;
             }
         }
-        let tick_start = std::time::Instant::now();
         let substeps = if self.calm(wind) { 1 } else { SUBSTEPS };
         let dt = TICK / substeps as f64;
         let params = IntegrationParameters {
@@ -733,7 +712,7 @@ impl World {
                 .unwrap_or(NonZeroUsize::MIN),
             num_internal_pgs_iterations: 1,
             num_internal_stabilization_iterations: 1,
-            max_internal_iterations: self.sweeps.0,
+            max_internal_iterations: MAX_ITERATIONS,
             internal_velocity_tolerance: CONTACT_TOLERANCE,
             normalized_contact_sag: CONTACT_SAG,
             max_ccd_substeps: 1,
@@ -778,10 +757,6 @@ impl World {
                 break;
             }
             // Gravity is among the forces of each body, which are weighed against what carries it.
-            let stage_prof = rapier3d_f64::counters::SolverCounters::aerolith_stage_enabled();
-            if stage_prof {
-                self.pipeline.counters.enable();
-            }
             with_workers(start.len(), || {
                 self.pipeline.step(
                     &Vec3::zeros(),
@@ -799,48 +774,6 @@ impl World {
                     &(),
                 );
             });
-            if stage_prof {
-                use std::sync::atomic::{AtomicU64, Ordering};
-                pub static STAGE: [AtomicU64; 10] = [
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                ];
-                let c = &self.pipeline.counters;
-                let ns = |d: std::time::Duration| d.as_nanos() as u64;
-                STAGE[0].fetch_add(ns(c.cd.broad_phase_time.time()), Ordering::Relaxed);
-                STAGE[1].fetch_add(ns(c.cd.narrow_phase_time.time()), Ordering::Relaxed);
-                STAGE[2].fetch_add(ns(c.stages.island_construction_time.time()), Ordering::Relaxed);
-                STAGE[3].fetch_add(ns(c.stages.solver_time.time()), Ordering::Relaxed);
-                STAGE[4].fetch_add(ns(c.solver.velocity_resolution_time.time()), Ordering::Relaxed);
-                STAGE[5].fetch_add(ns(c.stages.update_time.time()), Ordering::Relaxed);
-                STAGE[6].fetch_add(ns(c.stages.ccd_time.time()), Ordering::Relaxed);
-                STAGE[7].fetch_add(ns(c.stages.user_changes.time()), Ordering::Relaxed);
-                STAGE[8].fetch_add(self.islands.active_dynamic_bodies().len() as u64, Ordering::Relaxed);
-                STAGE[9].fetch_add(self.narrow_phase.contact_graph().interactions().count() as u64, Ordering::Relaxed);
-                if sub + 1 == substeps && (self.profile.ticks + 1).is_multiple_of(100) {
-                    let m = |i: usize| STAGE[i].swap(0, Ordering::Relaxed) as f64 / 100.0e6;
-                    let avg = |i: usize| STAGE[i].swap(0, Ordering::Relaxed) as f64 / (100.0 * substeps as f64);
-                    let s = rapier3d_f64::counters::SolverCounters::aerolith_take_stage_profile();
-                    let sm = |i: usize| s[i] as f64 / 100.0e6;
-                    eprintln!(
-                        "STAGES/tick(ms): bp={:.2} np={:.2} isl={:.2} sol={:.2}(par={:.2}) upd={:.2} ccd={:.2} usr={:.2} | awake/sub={:.1} pairs/sub={:.0}",
-                        m(0), m(1), m(2), m(3), m(4), m(5), m(6), m(7), avg(8), avg(9)
-                    );
-                    eprintln!(
-                        "SOLVER_SUM(cpu-ms/tick): initC={:.2} updC={:.2} warm={:.2} bias={:.2}(sweep={:.2},accel={:.2}) stiff={:.2} int={:.2} stab={:.2}(sweep={:.2}) stf={:.2} | biasCalls={} biasSweeps={} stiffCalls={} stabCalls={} stabSweeps={} onePts={} fourGrps={}",
-                        sm(0), sm(2), sm(3), sm(4), sm(5), sm(6), sm(7), sm(8), sm(9), sm(17), sm(10),
-                        s[12]/100, s[13]/100, s[14]/100, s[15]/100, s[16]/100, s[18]/100, s[19]/100
-                    );
-                }
-            }
             if profiling {
                 self.profile.pipeline += mark.elapsed();
                 mark = std::time::Instant::now();
@@ -855,7 +788,6 @@ impl World {
                 mark = std::time::Instant::now();
             }
         }
-        self.sweeps.0 = next_sweeps(self.sweeps.0, tick_start.elapsed().as_secs_f64(), *TICK_BUDGET);
         self.water.forget_changes();
         self.crafts
             .as_mut_slice()

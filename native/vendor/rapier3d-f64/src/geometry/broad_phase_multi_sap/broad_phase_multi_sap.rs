@@ -120,6 +120,8 @@ pub struct BroadPhaseMultiSap {
         )
     )]
     reporting: HashMap<(u32, u32), bool>, // Workspace
+    #[cfg_attr(feature = "serde-serialize", serde(skip))]
+    reporting_sorted: Vec<((u32, u32), bool)>,
     /// AEROLITH: workspace of `update`.
     #[cfg_attr(feature = "serde-serialize", serde(skip))]
     moved: Vec<(ColliderHandle, Aabb)>,
@@ -141,6 +143,7 @@ impl BroadPhaseMultiSap {
             largest_layer: 0,
             region_pool: Vec::new(),
             reporting: HashMap::default(),
+            reporting_sorted: Vec::new(),
             colliders_proxy_ids: HashMap::default(),
             moved: Vec::new(),
         }
@@ -548,50 +551,54 @@ impl BroadPhaseMultiSap {
 
             layer_id = self.layers[curr_layer_id as usize].smaller_layer;
 
-            for ((proxy_id1, proxy_id2), colliding) in &self.reporting {
-                let (proxy1, proxy2) = self
-                    .proxies
-                    .elements
-                    .index_mut2(*proxy_id1 as usize, *proxy_id2 as usize);
+            if !self.reporting.is_empty() {
+                self.reporting_sorted.clear();
+                self.reporting_sorted.extend(self.reporting.drain());
+                self.reporting_sorted.sort_unstable_by_key(|&(pair, _)| pair);
 
-                match (&mut proxy1.data, &mut proxy2.data) {
-                    (SAPProxyData::Collider(handle1), SAPProxyData::Collider(handle2)) => {
-                        if *colliding {
-                            out_events.push(BroadPhasePairEvent::AddPair(ColliderPair::new(
-                                *handle1, *handle2,
-                            )));
-                        } else {
-                            out_events.push(BroadPhasePairEvent::DeletePair(ColliderPair::new(
-                                *handle1, *handle2,
-                            )));
+                for &((proxy_id1, proxy_id2), colliding) in &self.reporting_sorted {
+                    let (proxy1, proxy2) = self
+                        .proxies
+                        .elements
+                        .index_mut2(proxy_id1 as usize, proxy_id2 as usize);
+
+                    match (&mut proxy1.data, &mut proxy2.data) {
+                        (SAPProxyData::Collider(handle1), SAPProxyData::Collider(handle2)) => {
+                            if colliding {
+                                out_events.push(BroadPhasePairEvent::AddPair(ColliderPair::new(
+                                    *handle1, *handle2,
+                                )));
+                            } else {
+                                out_events.push(BroadPhasePairEvent::DeletePair(ColliderPair::new(
+                                    *handle1, *handle2,
+                                )));
+                            }
                         }
-                    }
-                    (SAPProxyData::Collider(_), SAPProxyData::Region(_)) => {
-                        if *colliding {
-                            // Add the collider to the subregion.
-                            proxy2
-                                .data
-                                .as_region_mut()
-                                .preupdate_proxy(*proxy_id1, false);
+                        (SAPProxyData::Collider(_), SAPProxyData::Region(_)) => {
+                            if colliding {
+                                // Add the collider to the subregion.
+                                proxy2
+                                    .data
+                                    .as_region_mut()
+                                    .preupdate_proxy(proxy_id1, false);
+                            }
                         }
-                    }
-                    (SAPProxyData::Region(_), SAPProxyData::Collider(_)) => {
-                        if *colliding {
-                            // Add the collider to the subregion.
-                            proxy1
-                                .data
-                                .as_region_mut()
-                                .preupdate_proxy(*proxy_id2, false);
+                        (SAPProxyData::Region(_), SAPProxyData::Collider(_)) => {
+                            if colliding {
+                                // Add the collider to the subregion.
+                                proxy1
+                                    .data
+                                    .as_region_mut()
+                                    .preupdate_proxy(proxy_id2, false);
+                            }
                         }
-                    }
-                    (SAPProxyData::Region(_), SAPProxyData::Region(_)) => {
-                        // This will only happen between two adjacent subregions because
-                        // they share some identical bounds. So this case does not matter.
+                        (SAPProxyData::Region(_), SAPProxyData::Region(_)) => {
+                            // This will only happen between two adjacent subregions because
+                            // they share some identical bounds. So this case does not matter.
+                        }
                     }
                 }
             }
-
-            self.reporting.clear();
         }
     }
 }

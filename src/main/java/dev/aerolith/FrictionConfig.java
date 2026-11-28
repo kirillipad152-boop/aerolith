@@ -41,6 +41,8 @@ final class FrictionConfig {
     private final Map<Identifier, Double> overrides;
     private final Map<Block, Contact> cache = new IdentityHashMap<>();
 
+    private static final List<FrictionConfig> INSTANCES = new java.util.concurrent.CopyOnWriteArrayList<>();
+
     FrictionConfig() {
         this(SPEC.isLoaded() ? OVERRIDES.get() : List.of());
     }
@@ -55,15 +57,25 @@ final class FrictionConfig {
             if (override != null) values.put(override.id, override.mu);
         }
         overrides = Map.copyOf(values);
+        INSTANCES.add(this);
+    }
+
+    static void invalidate(Block block) {
+        for (FrictionConfig config : INSTANCES) config.cache.remove(block);
     }
 
     Contact contact(BlockState state) {
         return cache.computeIfAbsent(state.getBlock(), block -> {
+            Materials.CustomProperties custom = Materials.custom(block);
             Materials.Surface surface = Materials.surface(state);
-            double mu = overrides.getOrDefault(BuiltInRegistries.BLOCK.getKey(block), coefficients.get(surface));
-            // Only slime springs back. Blocks do not bounce in Minecraft, and any rebound at falling speed (50 m/s is 4 m/s at
-            // a restitution of just 0.08) reads as crafts bouncing off each other.
-            return new Contact(mu, surface == Materials.Surface.SLIME ? 0.78 : 0.0);
+            double defaultMu = custom != null && custom.friction() != null ? custom.friction() : coefficients.get(surface);
+            double mu = overrides.getOrDefault(BuiltInRegistries.BLOCK.getKey(block), defaultMu);
+            // Only slime springs back by default. Blocks do not bounce in Minecraft, and any rebound at falling speed
+            // reads as crafts bouncing off each other unless explicitly requested via API.
+            double restitution = custom != null && custom.restitution() != null
+                    ? custom.restitution()
+                    : (surface == Materials.Surface.SLIME ? 0.78 : 0.0);
+            return new Contact(mu, restitution);
         });
     }
 

@@ -13,7 +13,7 @@ abstract class EntityCollisionMixin {
     @Inject(method = "collide", at = @At("RETURN"), cancellable = true)
     private void aerolith$collideWithHull(Vec3 requested, CallbackInfoReturnable<Vec3> callback) {
         Vec3 vanilla = callback.getReturnValue();
-        Vec3 clipped = HullCollisions.clipMovement((Entity) (Object) this, requested, vanilla);
+        Vec3 clipped = HullCollisions.clipMovement((Entity) (Object) this, vanilla);
         if (clipped != vanilla) callback.setReturnValue(clipped);
     }
 }

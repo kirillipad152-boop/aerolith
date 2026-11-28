@@ -487,6 +487,8 @@ final class CraftEditing {
         }
         // If the engine is down the piece keeps its blocks and joins the simulation when it is back.
         physics.bind(fragment);
+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(new dev.aerolith.api.AerolithEvents.CraftSplitEvent(
+                level, InternalApi.handle(parent), InternalApi.handle(fragment)));
     }
 
     /** Removes blocks from a craft the way anything but a player would: set to air, then the hull follows. */

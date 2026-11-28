@@ -170,6 +170,35 @@ pub extern "system" fn Java_dev_aerolith_NativePhysics_addBody<'a>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerolith_NativePhysics_addBodyWithCavities<'a>(
+    mut env: EnvUnowned<'a>,
+    _: JClass<'a>,
+    world: jlong,
+    state: JDoubleArray<'a>,
+    boxes: JDoubleArray<'a>,
+    friction_cells: JDoubleArray<'a>,
+    masses: JDoubleArray<'a>,
+    surfaces: JDoubleArray<'a>,
+    cavities: JDoubleArray<'a>,
+) -> jlong {
+    env.with_env(|env| {
+        let state = read_array(env, &state, STATE_LEN)?;
+        let boxes = read_array(env, &boxes, 8 * MAX_BOXES)?;
+        let cells = read_array(env, &friction_cells, MAX_BOXES)?;
+        let masses = read_array(env, &masses, 7 * MAX_PARTS)?;
+        let surfaces = read_array(env, &surfaces, 8 * MAX_SURFACES)?;
+        let cavities = read_array(env, &cavities, 6 * MAX_BOXES)?;
+        let mut registry = registry()?;
+        let id = registry.allocate()?;
+        registry.world(world)?.add_body_with_cavities(
+            id, &state, &boxes, &cells, &masses, &surfaces, &cavities,
+        )?;
+        Ok(id)
+    })
+    .resolve::<JavaException>()
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_aerolith_NativePhysics_removeBody<'a>(
     mut env: EnvUnowned<'a>,
     _: JClass<'a>,

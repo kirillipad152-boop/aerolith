@@ -13,6 +13,8 @@ mod submerged;
 
 const AIR_DENSITY: f64 = 1.225;
 const WATER_DENSITY: f64 = 1000.0;
+/// Low-speed viscous and wave-radiation water damping (equivalent velocity floor m/s) so floating rafts settle smoothly.
+const WATER_LINEAR_DRAG: f64 = 0.25;
 
 type Block = [i32; 3];
 
@@ -151,6 +153,11 @@ impl WaterGrid {
         let block = std::array::from_fn(|i| point[i].floor() as i32);
         self.cell(block)
             .is_some_and(|cell| point.y < f64::from(block[1]) + cell.height)
+    }
+
+    fn sample_cavity(&self, pose: &Pose, shape: BoxShape, frame: &BoxFrame, out: &mut Scratch) {
+        out.cavity_wet
+            .extend(self.displace(pose * shape.center, shape.half, frame, &mut out.polygons));
     }
 
     /// A spinning hull has different velocities across its wetted volume, even when its center is stationary.
@@ -372,6 +379,7 @@ impl WetBox {
 #[derive(Default)]
 pub(super) struct Scratch {
     wet: Vec<WetBox>,
+    cavity_wet: Vec<WetBox>,
     polygons: Polygons,
 }
 
@@ -414,6 +422,14 @@ pub(super) fn translation_surfaces(surfaces: &[Surface]) -> Vec<Surface> {
         .collect()
 }
 
+fn accumulate_buoyancy(samples: &[WetBox], com: Pos, force: &mut Vec3, torque: &mut Vec3) {
+    for wet in samples {
+        let buoyancy = Vec3::y() * (WATER_DENSITY * GRAVITY * wet.volume);
+        *force += buoyancy;
+        *torque += (wet.point - com).cross(&buoyancy);
+    }
+}
+
 pub(super) fn apply_forces(
     body: &mut RigidBody,
     craft: &Craft,
@@ -427,6 +443,7 @@ pub(super) fn apply_forces(
     let mut force = -Vec3::y() * (GRAVITY * body.mass());
     let mut torque = Vec3::zeros();
     scratch.wet.clear();
+    scratch.cavity_wet.clear();
     let near_water = water.near(com.coords, craft.radius);
     if near_water {
         let frame = BoxFrame::new(&pose.rotation);
@@ -434,10 +451,13 @@ pub(super) fn apply_forces(
         for &shape in &craft.boxes {
             water.sample_box(&pose, shape, &frame, spinning, scratch);
         }
-        for wet in &scratch.wet {
-            let buoyancy = Vec3::y() * (WATER_DENSITY * GRAVITY * wet.volume);
-            force += buoyancy;
-            torque += (wet.point - com).cross(&buoyancy);
+        accumulate_buoyancy(&scratch.wet, com, &mut force, &mut torque);
+        if !craft.cavity_boxes.is_empty() {
+            // Sealed interior cavities displace exterior water for Archimedes buoyancy without adding interior drag.
+            for &cavity in &craft.cavity_boxes {
+                water.sample_cavity(&pose, cavity, &frame, scratch);
+            }
+            accumulate_buoyancy(&scratch.cavity_wet, com, &mut force, &mut torque);
         }
     }
     if craft.throttle > 0.0 {
@@ -488,7 +508,8 @@ pub(super) fn apply_forces(
             // use wetted exterior faces if large hulls need more accurate hydrodynamic drag.
             let area =
                 4.0 * direction.dot(&Vec3::new(h.y * h.z, h.z * h.x, h.x * h.y)) * wet_box.fraction;
-            let impulse = -relative * (0.5 * WATER_DENSITY * area * speed * dt);
+            let impulse =
+                -relative * (0.5 * WATER_DENSITY * area * (speed + WATER_LINEAR_DRAG) * dt);
             drag.add(wet_box.point - com, relative, impulse);
         }
     }
@@ -518,11 +539,21 @@ pub(super) fn apply_forces(
         let normal = surface.direction;
         let force = match surface.kind {
             SurfaceKind::Face => {
-                let normal_speed = relative.dot(&normal);
-                if normal_speed <= 0.0 {
+                let speed = relative.norm();
+                if speed < 1.0e-9 {
                     continue;
                 }
-                -normal * (0.5 * AIR_DENSITY * 1.1 * normal_speed * normal_speed)
+                let vn = relative.dot(&normal);
+                let tangential = relative - normal * vn;
+                // Attached viscous skin friction acts on windward/grazing faces and decays in separated wake flow.
+                let attached = ((vn / speed + 0.35) / 0.5).clamp(0.0, 1.0);
+                let shear = -tangential * (0.5 * AIR_DENSITY * FACE_SKIN_FRICTION * attached * speed);
+                let pressure = if vn > 0.0 {
+                    -normal * (0.5 * AIR_DENSITY * 1.1 * vn * vn)
+                } else {
+                    Vec3::zeros()
+                };
+                pressure + shear
             }
             SurfaceKind::Foil => foil_force(relative, normal, Vec3::z()),
             SurfaceKind::Thrust => unreachable!(),
@@ -542,6 +573,8 @@ pub(super) fn apply_forces(
     Ok(())
 }
 
+/// Skin-friction shear coefficient along exposed exterior hull surfaces.
+const FACE_SKIN_FRICTION: f64 = 0.015;
 /// Most a pilot's stick lowers a control surface's trailing edge.
 const MAX_DEFLECTION: f64 = 25.0 * PI / 180.0;
 /// Most the flaps are lowered.
@@ -552,6 +585,7 @@ const FLAP_EFFECTIVENESS: f64 = 0.5;
 const MIN_LEVER: f64 = 0.05;
 const FOIL_SLOPE: f64 = 4.8;
 const STALL: f64 = 15.0 * PI / 180.0;
+const STALL_TRANSITION: f64 = 10.0 * PI / 180.0;
 
 /// How far a control surface's trailing edge is lowered now, in radians; positive means more lift along its normal. The stick
 /// asks for a torque about an axis of the craft, and the surface is moved whichever way its lift, at its distance from the
@@ -576,8 +610,7 @@ pub(super) fn foil_force(relative: Vec3, normal: Vec3, chord: Vec3) -> Vec3 {
 }
 
 /// The force of a foil whose trailing edge is lowered by `flap` radians (negative: raised). That bends the camber, which moves
-/// the lift curve up by the effective angle and costs drag; the angle at which the airflow lets go stays that of the chord,
-/// so a flap raises the most lift a wing can give and does not make it stall sooner.
+/// the lift curve up by the effective angle and costs drag; post-stall blends smoothly into flat-plate separated flow.
 pub(super) fn foil_force_flapped(relative: Vec3, normal: Vec3, chord: Vec3, flap: f64) -> Vec3 {
     let speed = relative.norm();
     if speed < 1.0e-9 {
@@ -586,21 +619,29 @@ pub(super) fn foil_force_flapped(relative: Vec3, normal: Vec3, chord: Vec3, flap
     let direction = relative / speed;
     let vn = relative.dot(&normal);
     let vc = relative.dot(&chord);
+    let v_planar_sq = vn * vn + vc * vc;
     let alpha = (-vn).atan2(vc.abs());
+    let abs_alpha = alpha.abs();
     let shift = FOIL_SLOPE * FLAP_EFFECTIVENESS * flap;
-    let cl = if alpha.abs() <= STALL {
-        FOIL_SLOPE * alpha + shift
+    let cl_attached = FOIL_SLOPE * abs_alpha.min(STALL) * alpha.signum() + shift;
+    let cl = if abs_alpha <= STALL {
+        cl_attached
     } else {
-        let remaining = (FRAC_PI_2 - alpha.abs()) / (FRAC_PI_2 - STALL);
-        let faded = remaining.powi(3);
-        (FOIL_SLOPE * STALL * alpha.signum() + shift) * faded
+        let post_fade = ((FRAC_PI_2 - abs_alpha) / (FRAC_PI_2 - STALL)).clamp(0.0, 1.0);
+        let peak = cl_attached * post_fade.powi(3);
+        let deep = (0.95 * alpha.sin() * alpha.cos() + shift * post_fade.powi(2)) * post_fade.powi(2);
+        let t = ((abs_alpha - STALL) / STALL_TRANSITION).clamp(0.0, 1.0);
+        let blend = t * t * (3.0 - 2.0 * t);
+        peak * (1.0 - blend) + deep * blend
     };
-    let cd = 0.025 + 0.10 * cl * cl + 1.10 * alpha.sin().powi(2) + 0.5 * flap * flap;
+    let parasite_drag = 0.020 * speed * speed;
+    let pressure_drag =
+        (0.065 * cl * cl + 1.15 * alpha.sin().powi(2) + 0.45 * flap * flap) * v_planar_sq;
     let lift_direction = (normal - direction * normal.dot(&direction))
         .try_normalize(1.0e-9)
         .unwrap_or_else(Vec3::zeros);
     0.5 * AIR_DENSITY
-        * (lift_direction * (cl * (vn * vn + vc * vc)) - direction * (cd * speed * speed))
+        * (lift_direction * (cl * v_planar_sq) - direction * (parasite_drag + pressure_drag))
 }
 
 /// Sum while visiting faces; no per-face impulses need to be stored or replayed.

@@ -180,12 +180,13 @@ final class StructureTransfer {
         Plots.write(plot, origin, moved);
         craft.start(Vec3.atCenterOf(anchor), player.getUUID(), id, origin, chunks);
         // Discarding the craft clears the plot again, so a failure here leaves nothing behind.
-        if (!level.addFreshEntity(craft) || !physics.bind(craft) || !replace(level, removals, null, craft)) {
+        if (!level.addFreshEntity(craft) || !physics.bind(craft) || !replace(level, removals, null)) {
             craft.discard();
             AssemblerItem.message(player, "failed");
             return null;
         }
         notifyNeighbors(level, removals);
+        NeoForge.EVENT_BUS.post(new dev.aerolith.api.AerolithEvents.CraftAssembledEvent(level, InternalApi.handle(craft), player));
         AssemblerItem.message(player, "assembled", blocks.size(), craft.getId());
         return craft;
     }
@@ -210,12 +211,17 @@ final class StructureTransfer {
             craft.discard();
             return null;
         }
+        NeoForge.EVENT_BUS.post(new dev.aerolith.api.AerolithEvents.CraftAssembledEvent(level, InternalApi.handle(craft), null));
         return craft;
     }
 
     static boolean dock(ServerLevel level, ServerPlayer player, CraftEntity craft) {
         if (!craft.canEdit(player)) {
             AssemblerItem.message(player, "owner");
+            return false;
+        }
+        if (NeoForge.EVENT_BUS.post(new dev.aerolith.api.AerolithEvents.CraftDisassembleEvent(
+                level, InternalApi.handle(craft), player)).isCanceled()) {
             return false;
         }
         if (craft.isVehicle()) {
@@ -243,7 +249,9 @@ final class StructureTransfer {
             if (!accessible(level, player, pos)) return false;
             BlockState prior = level.getBlockState(pos);
             BlockState restored = cell.getValue().rotate(rotation);
-            if (!prior.isAir() || !Materials.fenceLike(restored) && obstructed(level, craft, pos, restored)) {
+            if (!prior.isAir() || Materials.boxes(restored).stream().anyMatch(box ->
+                    !level.getEntities(craft, box.move(pos).deflate(0.001),
+                            e -> !e.isSpectator() && (e instanceof LivingEntity || e instanceof CraftEntity)).isEmpty())) {
                 AssemblerItem.at(player, "obstructed", pos);
                 return false;
             }
@@ -254,7 +262,7 @@ final class StructureTransfer {
         boolean placed;
         docking = true;
         try {
-            placed = !placements.isEmpty() && replace(level, placements, player, craft);
+            placed = !placements.isEmpty() && replace(level, placements, player);
         } finally {
             docking = false;
         }
@@ -311,14 +319,7 @@ final class StructureTransfer {
         }
     }
 
-    private static boolean obstructed(ServerLevel level, CraftEntity craft, BlockPos pos, BlockState placed) {
-        List<AABB> shapes = Materials.entityBoxes(placed);
-        if (shapes.isEmpty()) shapes = Materials.boxes(placed);
-        return shapes.stream().anyMatch(box -> !level.getEntities(craft, box.move(pos).deflate(0.001),
-                entity -> !entity.isSpectator() && (entity instanceof LivingEntity || entity instanceof CraftEntity)).isEmpty());
-    }
-
-    private static boolean replace(ServerLevel level, List<Change> plan, ServerPlayer placing, CraftEntity craft) {
+    private static boolean replace(ServerLevel level, List<Change> plan, ServerPlayer placing) {
         if (level.captureBlockSnapshots) return false;
         int written = 0;
         boolean committed = false;
@@ -337,21 +338,6 @@ final class StructureTransfer {
                 written++;
             }
             if (placing != null) {
-                List<Integer> fences = new ArrayList<>();
-                for (int i = 0; i < plan.size(); i++) if (Materials.fenceLike(plan.get(i).after)) fences.add(i);
-                fences.sort(Comparator.<Integer>comparingInt(i -> plan.get(i).pos.getY()).reversed());
-                for (int i : fences) {
-                    Change change = plan.get(i);
-                    BlockState connected = Plots.connectedFenceState(level, change.pos, change.after);
-                    if (obstructed(level, craft, change.pos, connected)) {
-                        AssemblerItem.at(placing, "obstructed", change.pos);
-                        return false;
-                    }
-                    if (connected != change.after) {
-                        if (!level.setBlock(change.pos, connected, QUIET)) return false;
-                        plan.set(i, new Change(change.pos, change.before, connected, change.beforeEntity, change.afterEntity));
-                    }
-                }
                 for (BlockSnapshot snapshot : checkpoints) {
                     BlockState against = level.getBlockState(snapshot.getPos().below());
                     if (NeoForge.EVENT_BUS.post(new BlockEvent.EntityPlaceEvent(snapshot, against, placing)).isCanceled()) return false;
@@ -386,7 +372,7 @@ final class StructureTransfer {
 
     private static void notifyNeighbors(ServerLevel level, List<Change> plan) {
         for (Change change : plan) {
-            level.markAndNotifyBlock(change.pos, level.getChunkAt(change.pos), change.before, level.getBlockState(change.pos), Block.UPDATE_NEIGHBORS, 512);
+            level.markAndNotifyBlock(change.pos, level.getChunkAt(change.pos), change.before, change.after, Block.UPDATE_NEIGHBORS, 512);
         }
     }
 }

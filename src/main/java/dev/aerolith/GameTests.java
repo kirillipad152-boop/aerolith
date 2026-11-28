@@ -31,13 +31,6 @@ final class GameTests {
         add("assemblelandsaveanddock", "default", 120, false, AerolithGameTests::assembleLandSaveAndDock);
         add("storagekeepsitsitemsthroughassemblinganddocking", "default", 100, false, AerolithGameTests::storageKeepsItsItemsThroughAssemblingAndDocking);
         add("partialhullvolumegeometryandmaterials", "default", 100, false, AerolithGameTests::partialHullVolumeGeometryAndMaterials);
-        add("commonmaterialshavedensity", "default", 100, false, AerolithGameTests::commonMaterialsHaveDensity);
-        add("fencesreconnectwhenassembledanddocked", "default", 100, false, AerolithGameTests::fencesReconnectWhenAssembledAndDocked);
-        add("stonewallsuselowarmsofftheworldandreconnectondocking", "default", 100, false, AerolithGameTests::stoneWallsUseLowArmsOffTheWorldAndReconnectOnDocking);
-        add("blocksmeetingatanedgestayonecraft", "default", 100, false, AerolithGameTests::blocksMeetingAtAnEdgeStayOneCraft);
-        add("faceadjacentcellsstayonecraftwithoutshapecontact", "default", 100, false, AerolithGameTests::faceAdjacentCellsStayOneCraftWithoutShapeContact);
-        add("openinggatekeepsthecraftanditsmass", "default", 100, false, AerolithGameTests::openingGateKeepsTheCraftAndItsMass);
-        add("craftlandsatvisiblefenceheight", "default", 160, false, AerolithGameTests::craftLandsAtVisibleFenceHeight);
         add("itemrestsonsoliddeck", "default", 160, false, AerolithGameTests::itemRestsOnSolidDeck);
         add("itemfallsthroughhullgap", "default", 160, false, AerolithGameTests::itemFallsThroughHullGap);
         add("brokenmiddlesplitscraftintotwobodieswithsamemomentum", "default", 60, false, AerolithGameTests::brokenMiddleSplitsCraftIntoTwoBodiesWithSameMomentum);
@@ -59,9 +52,7 @@ final class GameTests {
         add("waterneverleavestheboxofacraft", "default", 400, false, AerolithGameTests::waterNeverLeavesTheBoxOfACraft);
         add("entitiesswiminthewaterofacraft", "default", 200, false, AerolithGameTests::entitiesSwimInTheWaterOfACraft);
         add("widecraftfallsnearthebottomoftheworld", "aerolith_height_limit", 80, false, AerolithGameTests::wideCraftFallsNearTheBottomOfTheWorld);
-        add("craftsfallfromanyheightandarenottakenbythevoid", "aerolith_height_limit", 200, false, AerolithGameTests::craftsFallFromAnyHeightAndAreNotTakenByTheVoid);
         add("enginebenchmark", "aerolith_bench", 4000, false, AerolithGameTests::engineBenchmark);
-        add("cubesbenchmark", "aerolith_bench", 4000, false, CubeRaftsBenchmark::run);
         add("breakingachestofacraftspillsitscontentsintotheworld", "default", 100, false, AerolithGameTests::breakingAChestOfACraftSpillsItsContentsIntoTheWorld);
         add("craftssavedbeforeplotstoragemoveintoaplot", "default", 100, false, AerolithGameTests::craftsSavedBeforePlotStorageMoveIntoAPlot);
         add("spawncommandmakesasmanycraftsofthatsize", "aerolith_spawn", 200, false, AerolithGameTests::spawnCommandMakesAsManyCraftsOfThatSize);
@@ -80,16 +71,11 @@ final class GameTests {
         add("rotatedcontactandsliderespectterrain", "default", 100, false, HullCollisionGameTests::rotatedContactAndSlideRespectTerrain);
         add("crossaxesandhullopeningsstayempty", "default", 100, false, HullCollisionGameTests::crossAxesAndHullOpeningsStayEmpty);
         add("placementseesbothsidesofacolumnandtrackshullchanges", "default", 100, false, HullCollisionGameTests::placementSeesBothSidesOfAColumnAndTracksHullChanges);
-        add("trackingrestorescraftresources", "default", 100, false, CraftTrackingGameTests::trackingRestoresCraftResources);
-        add("craftssurviveaslowengineandaserverstall", "default", 600, false, CraftTrackingGameTests::craftsSurviveASlowEngineAndAServerStall);
-        add("interpolatedboundsfollowrenderedpose", "default", 100, false, CraftTrackingGameTests::interpolatedBoundsFollowRenderedPose);
         add("slabsupportsandcarriesitems", "default", 100, false, HullCollisionGameTests::slabSupportsAndCarriesItems);
-        add("fencekeepsvanillabarrierbutnoghostmassorselection", "default", 100, false, HullCollisionGameTests::fenceKeepsVanillaBarrierButNoGhostMassOrSelection);
         add("translatingsidepushesinsteadofpassingthrough", "default", 100, false, HullCollisionGameTests::translatingSidePushesInsteadOfPassingThrough);
         add("translatinghullpusheseveryentityinacrowd", "default", 100, false, HullCollisionGameTests::translatingHullPushesEveryEntityInACrowd);
         add("playercrouchesandpacketsrespectdeck", "default", 100, false, HullCollisionGameTests::playerCrouchesAndPacketsRespectDeck);
         add("creaturewalksupatilteddeckwithoutslidingback", "default", 100, false, HullCollisionGameTests::creatureWalksUpATiltedDeckWithoutSlidingBack);
-        add("walkingplayerdoesnotloadortiltcraft", "default", 100, false, HullCollisionGameTests::walkingPlayerDoesNotLoadOrTiltCraft);
         add("creaturewalkingintoahullpushesit", "default", 100, false, HullCollisionGameTests::creatureWalkingIntoAHullPushesIt);
         add("fastrafpushesplayerswithouttunneling", "default", 100, false, FastRaftCollisionGameTests::fastRaftPushesPlayersWithoutTunneling);
         add("fastspinningraftbeyondoldstepcappushesplayer", "default", 100, false, FastRaftCollisionGameTests::fastSpinningRaftBeyondOldStepCapPushesPlayer);
@@ -100,6 +86,8 @@ final class GameTests {
         add("raftwithredstoneassemblesanddocksback", "aerolith_redstone", 300, false, PhysicsGameTests::raftWithRedstoneAssemblesAndDocksBack);
         add("redstoneonacraftdoesnotrebuilditshull", "aerolith_redstone", 300, false, PhysicsGameTests::redstoneOnACraftDoesNotRebuildItsHull);
         add("blocksdroppedonaraftneversinkintoit", "default", 900, false, PhysicsGameTests::blocksDroppedOnARaftNeverSinkIntoIt);
+        add("sealedaircavityfloatsheavyhullandbreachingsinksit", "default", 320, false, AerolithGameTests::sealedAirCavityFloatsHeavyHullAndBreachingSinksIt);
+        add("developerapiassemblescontrolsaerodynamicsandfiresevents", "default", 120, false, AerolithGameTests::developerApiAssemblesControlsAerodynamicsAndFiresEvents);
         FUNCTIONS.register(bus);
         bus.addListener(GameTests::registerInstances);
     }

@@ -13,6 +13,7 @@ import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
@@ -26,6 +27,12 @@ public final class CraftClient {
     private static ClientLevel crackLevel;
 
     private CraftClient() {}
+
+    @SubscribeEvent
+    public static void setup(FMLClientSetupEvent event) {
+        HullCollisions.pushSink = (craft, point, direction, strength) ->
+                ClientPacketDistributor.sendToServer(new CraftPush(craft.getId(), point, direction, (float) strength));
+    }
 
     /** The craft block under the crosshair, unless something nearer in the world or a mob is in the way. */
     static CraftEditing.Located aimed(float partialTick) {

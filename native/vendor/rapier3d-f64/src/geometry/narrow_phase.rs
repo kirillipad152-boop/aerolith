@@ -1181,6 +1181,20 @@ impl NarrowPhase {
                 out_contact_pairs.push(EdgeIndex::new(pair_id as u32));
             }
         }
+
+        for out_island in &mut out[..islands.num_islands()] {
+            if out_island.len() > 1 {
+                out_island.sort_by_key(|&idx| {
+                    let m = &out_manifolds[idx];
+                    (
+                        m.data.rigid_body1.map(|h| h.0),
+                        m.data.rigid_body2.map(|h| h.0),
+                        m.subshape1,
+                        m.subshape2,
+                    )
+                });
+            }
+        }
     }
 }
 
