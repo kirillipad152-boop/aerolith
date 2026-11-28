@@ -11,3 +11,4 @@ Rapier 0.26.1 (Apache-2.0, see LICENSE) with changes for Aerolith, each marked A
 - a large island is solved by several threads: its contacts are coloured so that no two of one colour share a body, each colour
   is split across workers, and the conjugate-gradient sums are combined at a barrier (`parallel_colored.rs`);
 - `AEROLITH_STAGE_PROFILE` prints per-stage solver timings to stderr; it is off by default.
+- the barrier of that team spins briefly, then yields its core, then sleeps, so that a worker that is not running does not cost the others whole time slices.

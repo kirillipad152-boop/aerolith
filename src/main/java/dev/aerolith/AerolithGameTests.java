@@ -754,6 +754,31 @@ public final class AerolithGameTests {
                 .thenExecute(craft::discard).thenSucceed();
     }
 
+    /** There is no limit of height: a craft keeps falling from far above the world and out of it below, and is not removed. */
+    public static void craftsFallFromAnyHeightAndAreNotTakenByTheVoid(GameTestHelper test) {
+        ServerLevel level = test.getLevel();
+        Vec3 center = test.absoluteVec(new Vec3(5.5, 0, 97.5));
+        var chunk = net.minecraft.world.level.ChunkPos.containing(BlockPos.containing(center));
+        for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++) level.setChunkForced(chunk.x() + x, chunk.z() + z, true);
+        var block = List.of(new CraftBlock(BlockPos.ZERO, Blocks.OAK_PLANKS.defaultBlockState()));
+        // Over the top of the world, beyond where crafts used to freeze, and well under the bottom, where vanilla removes entities.
+        double[] heights = {level.getMaxY() + 400.0, level.getMinY() - 90.0};
+        CraftEntity[] crafts = new CraftEntity[heights.length];
+        for (int i = 0; i < heights.length; i++) {
+            crafts[i] = StructureTransfer.create(level, block, new Vec3(center.x, heights[i], center.z), UUID.randomUUID());
+            test.assertTrue(crafts[i] != null, "Cannot make a craft at " + heights[i]);
+        }
+        test.startSequence().thenWaitUntil(() -> {
+            for (int i = 0; i < heights.length; i++) {
+                test.assertTrue(!crafts[i].isRemoved(), "The craft at " + heights[i] + " was removed");
+                test.assertTrue(crafts[i].getY() < heights[i] - 2.0,
+                        "The craft at " + heights[i] + " does not fall (y=" + crafts[i].getY() + ", simulated=" + WorldPhysics.of(level).isSimulated(crafts[i]) + ", ticking=" + level.isPositionEntityTicking(crafts[i].blockPosition()) + ", anchored=" + crafts[i].anchored() + ", pos=" + crafts[i].blockPosition() + ", chunk=" + (level.getChunkSource().getChunkNow(crafts[i].blockPosition().getX() >> 4, crafts[i].blockPosition().getZ() >> 4) != null) + ")");
+            }
+        }).thenExecute(() -> {
+            for (CraftEntity craft : crafts) craft.discard();
+        }).thenSucceed();
+    }
+
     /**
      * The engine benchmark. It only runs when AEROLITH_BENCH is set (AEROLITH_BENCH=1 ./gradlew runGameTestServer), alone in its
      * own batch so that no other test loads the server while it is timed; the results are in the log under "Benchmark".

@@ -11,6 +11,9 @@ use crate::math::{Real, SIMD_WIDTH};
 pub(crate) const INTRA_ISLAND_MIN_MANIFOLDS: usize = 32;
 pub(crate) const MAX_WORKERS: usize = 16;
 const MAX_COLORS: usize = 128;
+/// How long a barrier is waited for by spinning, then by yielding the core, before the thread sleeps (in checks).
+const SPINS: u32 = 2000;
+const YIELDS: u32 = 200;
 
 /// Guards `PhysicsPipeline` so at most one fixed-team barrier runs at a time in the process.
 pub(crate) static INTRA_ISLAND_LOCK: AtomicBool = AtomicBool::new(false);
@@ -554,11 +557,22 @@ impl<S> TeamSync<S> {
             self.arrived.0.store(0, Ordering::Relaxed);
             self.release_gen.0.store(next_gen, Ordering::Release);
         } else {
+            // AEROLITH: a barrier lasts microseconds when every worker has a core, so spin for that. But when the game's own
+            // threads (client, server, compiler) hold the cores, the worker everybody waits for is not running, and
+            // spinners that never let go of theirs turn a 30 ms step into seconds: give the core back, and then sleep.
+            let mut waited = 0u32;
             while self.release_gen.0.load(Ordering::Acquire) != next_gen {
                 if self.aborted.load(Ordering::Relaxed) {
                     return;
                 }
-                std::hint::spin_loop();
+                waited += 1;
+                if waited < SPINS {
+                    std::hint::spin_loop();
+                } else if waited < SPINS + YIELDS {
+                    std::thread::yield_now();
+                } else {
+                    std::thread::sleep(std::time::Duration::from_micros(30));
+                }
             }
         }
     }

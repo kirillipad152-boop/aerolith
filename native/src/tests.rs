@@ -2006,3 +2006,24 @@ fn lowered_flaps_add_lift_and_drag_and_do_not_stall_the_wing_sooner() {
         fluids::foil_force_flapped(v, Vec3::y(), Vec3::z(), 0.0)
     );
 }
+
+#[test]
+fn the_solver_is_held_to_the_tick_budget_and_let_go_again() {
+    let budget = 0.035;
+    // Over budget: fewer sweeps every tick, but never fewer than the floor.
+    let mut sweeps = MAX_ITERATIONS;
+    for _ in 0..40 {
+        let next = next_sweeps(sweeps, 0.150, budget);
+        assert!(next < sweeps || next == MIN_ITERATIONS);
+        sweeps = next;
+    }
+    assert_eq!(sweeps, MIN_ITERATIONS);
+    // Just inside the budget: left as it is. Well inside: back to the full number, and no further.
+    assert_eq!(next_sweeps(sweeps, 0.033, budget), sweeps);
+    for _ in 0..200 {
+        sweeps = next_sweeps(sweeps, 0.010, budget);
+    }
+    assert_eq!(sweeps, MAX_ITERATIONS);
+    // No budget, no limit.
+    assert_eq!(next_sweeps(MIN_ITERATIONS, 1.0, 0.0), MAX_ITERATIONS);
+}

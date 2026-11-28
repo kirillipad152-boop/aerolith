@@ -616,6 +616,9 @@ public final class CraftEntity extends Entity {
         return new AABB(c.x - ex, c.y - ey, c.z - ez, c.x + ex, c.y + ey, c.z + ez);
     }
 
+    /** A craft carries a player's work: the void does not take it, whatever its height. */
+    @Override protected void onBelowWorld() {}
+
     @Override public boolean isPickable() { return hull != null && !isRemoved(); }
     @Override public boolean hurtServer(ServerLevel level, DamageSource source, float amount) { return false; }
     @Override public boolean canTeleport(Level from, Level to) { return false; }

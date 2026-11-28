@@ -31,7 +31,8 @@ public final class CubeRaftsBench {
                     0, 1.5, edge, extent, 1.5, .5, .60, 0, 0, 1.5, -edge, extent, 1.5, .5, .60, 0});
             long[] ids = new long[count];
             double[] sx = new double[count], sz = new double[count], vx = new double[count], vz = new double[count];
-            double[] maxShift = new double[count];
+            double[] maxShift = new double[count], px = new double[count], pz = new double[count];
+            double deepest = 0;
             for (int i = 0; i < count; i++) {
                 sx[i] = (i % side - (side - 1) * .5) * 1.025;
                 sz[i] = (i / side - (side - 1) * .5) * 1.025;
@@ -60,13 +61,22 @@ public final class CubeRaftsBench {
                     maxShift[row] = Math.max(maxShift[row], dx * dx + dz * dz);
                     vx[row] = out[i + 8];
                     vz[row] = out[i + 10];
+                    px[row] = out[i + 1];
+                    pz[row] = out[i + 3];
+                }
+                // Centres of two unit cubes are never closer than 1 m, however they are turned; less is overlap.
+                for (int a = 0; a < count; a++) {
+                    for (int b = a + 1; b < count; b++) {
+                        double d = Math.hypot(px[a] - px[b], pz[a] - pz[b]);
+                        if (d < 1) deepest = Math.max(deepest, 1 - d);
+                    }
                 }
             }
             long moved = Arrays.stream(maxShift).filter(d -> d > .0025).count();
             if (moved < count * .9) throw new AssertionError("Only " + moved + "/" + count + " rafts moved");
             Arrays.sort(times);
-            System.out.printf(Locale.ROOT, "CUBES count=%d active=%d displaced=%d mean=%.3f p50=%.3f p95=%.3f max=%.3f%n",
-                    count, count, moved, Arrays.stream(times).average().orElseThrow(),
+            System.out.printf(Locale.ROOT, "CUBES count=%d active=%d displaced=%d overlap=%.0fmm mean=%.3f p50=%.3f p95=%.3f max=%.3f%n",
+                    count, count, moved, deepest * 1000, Arrays.stream(times).average().orElseThrow(),
                     times[times.length / 2], times[(int) Math.ceil(times.length * .95) - 1], times[times.length - 1]);
         } finally {
             NativePhysics.destroyWorld(world);

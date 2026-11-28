@@ -52,7 +52,9 @@ final class GameTests {
         add("waterneverleavestheboxofacraft", "default", 400, false, AerolithGameTests::waterNeverLeavesTheBoxOfACraft);
         add("entitiesswiminthewaterofacraft", "default", 200, false, AerolithGameTests::entitiesSwimInTheWaterOfACraft);
         add("widecraftfallsnearthebottomoftheworld", "aerolith_height_limit", 80, false, AerolithGameTests::wideCraftFallsNearTheBottomOfTheWorld);
+        add("craftsfallfromanyheightandarenottakenbythevoid", "aerolith_height_limit", 200, false, AerolithGameTests::craftsFallFromAnyHeightAndAreNotTakenByTheVoid);
         add("enginebenchmark", "aerolith_bench", 4000, false, AerolithGameTests::engineBenchmark);
+        add("cubesbenchmark", "aerolith_bench", 4000, false, CubeRaftsBenchmark::run);
         add("breakingachestofacraftspillsitscontentsintotheworld", "default", 100, false, AerolithGameTests::breakingAChestOfACraftSpillsItsContentsIntoTheWorld);
         add("craftssavedbeforeplotstoragemoveintoaplot", "default", 100, false, AerolithGameTests::craftsSavedBeforePlotStorageMoveIntoAPlot);
         add("spawncommandmakesasmanycraftsofthatsize", "aerolith_spawn", 200, false, AerolithGameTests::spawnCommandMakesAsManyCraftsOfThatSize);

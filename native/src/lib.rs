@@ -60,6 +60,38 @@ const CALM_SPEED: f64 = 1.0;
 /// many times. A light body under a thousand times its weight takes a few dozen, most take one.
 const CONTACT_TOLERANCE: f64 = 0.003;
 const MAX_ITERATIONS: usize = 200;
+/// A solver run that has to be held to the tick budget still makes this many sweeps.
+const MIN_ITERATIONS: usize = 16;
+/// A tick of the engine should take no longer than this (seconds; a tick of the game is 50 ms and the server waits up to 15 ms more), or the solver is allowed fewer sweeps for the next ones,
+/// until it fits again. `AEROLITH_TICK_BUDGET_MS=0` turns this off. Calm and small worlds never come near it.
+static TICK_BUDGET: LazyLock<f64> = LazyLock::new(|| {
+    std::env::var("AEROLITH_TICK_BUDGET_MS")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .map_or(0.035, |ms| (ms / 1000.0).clamp(0.0, 10.0))
+});
+
+/// How many sweeps one solver run may make in the next tick, given how long the last one took: fewer when over the budget
+/// (by a quarter each tick), and back to more, slowly, when it is well within. A budget of zero never limits.
+fn next_sweeps(sweeps: usize, spent: f64, budget: f64) -> usize {
+    if budget <= 0.0 {
+        MAX_ITERATIONS
+    } else if spent > budget {
+        (sweeps - sweeps / 4).clamp(MIN_ITERATIONS, MAX_ITERATIONS)
+    } else if spent < budget * 0.7 {
+        (sweeps + sweeps / 8 + 1).clamp(MIN_ITERATIONS, MAX_ITERATIONS)
+    } else {
+        sweeps
+    }
+}
+
+struct Sweeps(usize);
+
+impl Default for Sweeps {
+    fn default() -> Self {
+        Self(MAX_ITERATIONS)
+    }
+}
 /// The deepest a resting contact is pressed in by what it carries, in metres.
 const CONTACT_SAG: f64 = 0.002;
 /// Fewer awake bodies than this are faster done by one thread than handed around.
@@ -236,9 +268,18 @@ struct Profile {
     wakes: u32,
 }
 
-/// Shared by all worlds, and one core is left for the game.
+/// Shared by all worlds, and two cores are left for the game.
 static WORKERS: LazyLock<Option<ThreadPool>> = LazyLock::new(|| {
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1).clamp(1, 8));
+    // Two cores are left for the game, the server's tick and the client's frame: workers that spin at barriers while those run
+    // on their cores lose far more than a third worker brings (4 cores: 3 workers 114 ms, 2 workers 46 ms a step with the game
+    // busy). AEROLITH_THREADS sets the number outright; 1 turns the worker pool off.
+    let threads = std::env::var("AEROLITH_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map_or_else(
+            || std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(2).clamp(1, 8)),
+            |n| n.clamp(1, 16),
+        );
     ThreadPoolBuilder::new()
         .num_threads(threads.min(8))
         .thread_name(|i| format!("aerolith-physics-{i}"))
@@ -266,6 +307,8 @@ fn with_workers(bodies: usize, work: impl FnOnce() + Send) {
 #[derive(Default)]
 struct World {
     profile: Profile,
+    /// The most sweeps a solver run may make; lowered while ticks take longer than the budget.
+    sweeps: Sweeps,
     /// Bodies or colliders were added, removed or replaced since the last tick, so the engine has to look at them once.
     dirty: bool,
     crafts: Crafts,
@@ -681,6 +724,7 @@ impl World {
                 self.profile.wakes += 1;
             }
         }
+        let tick_start = std::time::Instant::now();
         let substeps = if self.calm(wind) { 1 } else { SUBSTEPS };
         let dt = TICK / substeps as f64;
         let params = IntegrationParameters {
@@ -689,7 +733,7 @@ impl World {
                 .unwrap_or(NonZeroUsize::MIN),
             num_internal_pgs_iterations: 1,
             num_internal_stabilization_iterations: 1,
-            max_internal_iterations: MAX_ITERATIONS,
+            max_internal_iterations: self.sweeps.0,
             internal_velocity_tolerance: CONTACT_TOLERANCE,
             normalized_contact_sag: CONTACT_SAG,
             max_ccd_substeps: 1,
@@ -811,6 +855,7 @@ impl World {
                 mark = std::time::Instant::now();
             }
         }
+        self.sweeps.0 = next_sweeps(self.sweeps.0, tick_start.elapsed().as_secs_f64(), *TICK_BUDGET);
         self.water.forget_changes();
         self.crafts
             .as_mut_slice()
