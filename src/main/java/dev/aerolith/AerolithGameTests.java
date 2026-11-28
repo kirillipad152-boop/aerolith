@@ -264,6 +264,30 @@ public final class AerolithGameTests {
         test.succeed();
     }
 
+    public static void blocksMeetingAtAnEdgeStayOneCraft(GameTestHelper test) {
+        floor(test);
+        ServerPlayer player = editor(test.getLevel());
+        test.setBlock(4, 2, 4, Blocks.OAK_PLANKS);
+        test.setBlock(5, 2, 5, Blocks.OBSIDIAN);
+        CraftEntity diagonal = assembleWithTool(test, player, new BlockPos(4, 2, 4), new BlockPos(5, 2, 5));
+        test.assertTrue(diagonal.blocks().size() == 2, "Two blocks that meet along an edge must assemble into one craft");
+        diagonal.discard();
+        test.setBlock(4, 2, 4, Blocks.AIR);
+        test.setBlock(5, 2, 5, Blocks.AIR);
+
+        test.setBlock(4, 2, 4, Blocks.OAK_PLANKS);
+        test.setBlock(5, 2, 4, Blocks.OAK_PLANKS);
+        test.setBlock(5, 2, 5, Blocks.OAK_PLANKS);
+        CraftEntity craft = assembleWithTool(test, player, new BlockPos(4, 2, 4), new BlockPos(5, 2, 5));
+        var corner = craft.blocks().stream().filter(b -> b.offset().equals(BlockPos.ZERO.east())).findFirst().orElseThrow();
+        CraftEditing.remove(craft, List.of(corner));
+        var parts = test.getLevel().getEntities(Aerolith.CRAFT.get(), craft.getBoundingBox().inflate(8), c -> true);
+        test.assertTrue(parts.size() == 1 && parts.getFirst().blocks().size() == 2,
+                "Breaking the corner of an L must leave the two diagonal blocks as one craft, got " + parts.size() + " crafts");
+        parts.forEach(CraftEntity::discard);
+        test.succeed();
+    }
+
     public static void openingGateKeepsTheCraftAndItsMass(GameTestHelper test) {
         Vec3 start = Vec3.atCenterOf(test.absolutePos(new BlockPos(5, 6, 5)));
         CraftEntity craft = StructureTransfer.create(test.getLevel(), List.of(new CraftBlock(BlockPos.ZERO,

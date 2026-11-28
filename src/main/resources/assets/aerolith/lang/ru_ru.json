@@ -23,7 +23,7 @@
   "message.aerolith.spawn_space": "Свободно мест: %1$s из %2$s.",
   "message.aerolith.capacity": "Достигнут предел числа аппаратов.",
   "message.aerolith.obstructed": "Место занято: %1$s, %2$s, %3$s.",
-  "message.aerolith.disconnected": "Соедините все блоки аппарата гранями.",
+  "message.aerolith.disconnected": "Все блоки аппарата должны касаться друг друга хотя бы ребром или углом.",
   "message.aerolith.permission": "Вы не можете менять блоки в этой точке: %1$s, %2$s, %3$s.",
   "message.aerolith.failed": "Не удалось выполнить операцию с аппаратом.",
   "message.aerolith.assembled": "Аппарат собран. Блоков: %1$s. ID сущности: %2$s.",

@@ -386,8 +386,16 @@ final class Hull {
         return faces[best];
     }
 
-    /** Groups of face-adjacent block cells, even when their collision shapes do not touch. */
+    /**
+     * Groups of block cells that touch: face to face, and also along an edge or at a corner, so two blocks that meet only
+     * diagonally stay one craft. Face contact is tried first because it is what nearly every craft has and is much cheaper.
+     */
     static List<List<CraftBlock>> components(List<CraftBlock> blocks) {
+        List<List<CraftBlock>> groups = components(blocks, false);
+        return groups.size() > 1 ? components(blocks, true) : groups;
+    }
+
+    private static List<List<CraftBlock>> components(List<CraftBlock> blocks, boolean diagonals) {
         var pending = new Long2ObjectOpenHashMap<CraftBlock>(blocks.size());
         for (CraftBlock block : blocks) pending.put(block.offset().asLong(), block);
         List<List<CraftBlock>> groups = new ArrayList<>();
@@ -396,10 +404,22 @@ final class Hull {
             List<CraftBlock> group = new ArrayList<>();
             group.add(first);
             for (int i = 0; i < group.size(); i++) {
-                BlockPos offset = group.get(i).offset();
-                for (Direction face : FACES) {
-                    CraftBlock next = pending.remove(neighborKey(offset, face));
-                    if (next != null) group.add(next);
+                long key = group.get(i).offset().asLong();
+                if (!diagonals) {
+                    for (Direction face : FACES) {
+                        CraftBlock next = pending.remove(BlockPos.offset(key, face.getStepX(), face.getStepY(), face.getStepZ()));
+                        if (next != null) group.add(next);
+                    }
+                    continue;
+                }
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dz = -1; dz <= 1; dz++) {
+                            if (dx == 0 && dy == 0 && dz == 0) continue;
+                            CraftBlock next = pending.remove(BlockPos.offset(key, dx, dy, dz));
+                            if (next != null) group.add(next);
+                        }
+                    }
                 }
             }
             groups.add(group);
@@ -411,29 +431,12 @@ final class Hull {
         return BlockPos.asLong(p.getX() + face.getStepX(), p.getY() + face.getStepY(), p.getZ() + face.getStepZ());
     }
 
-    /** The same cell adjacency used by {@link #components}, for initial assembly. */
+    /** Whether the blocks form one group by the adjacency of {@link #components}; the same rule for assembly. */
     static boolean connected(List<CraftBlock> blocks) {
-        Set<BlockPos> remaining = new HashSet<>();
-        for (CraftBlock block : blocks) {
-            remaining.add(block.offset());
-        }
-        if (remaining.isEmpty() || remaining.size() != blocks.size()) {
-            return false;
-        }
-        ArrayDeque<BlockPos> queue = new ArrayDeque<>();
-        BlockPos first = blocks.getFirst().offset();
-        queue.add(first);
-        remaining.remove(first);
-        while (!queue.isEmpty()) {
-            BlockPos p = queue.remove();
-            for (Direction face : FACES) {
-                BlockPos next = p.relative(face);
-                if (remaining.remove(next)) {
-                    queue.add(next);
-                }
-            }
-        }
-        return remaining.isEmpty();
+        if (blocks.isEmpty()) return false;
+        var cells = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(blocks.size());
+        for (CraftBlock block : blocks) cells.add(block.offset().asLong());
+        return cells.size() == blocks.size() && components(blocks).size() == 1;
     }
 
     static boolean validOffset(BlockPos offset) {

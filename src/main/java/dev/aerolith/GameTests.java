@@ -34,6 +34,7 @@ final class GameTests {
         add("commonmaterialshavedensity", "default", 100, false, AerolithGameTests::commonMaterialsHaveDensity);
         add("fencesreconnectwhenassembledanddocked", "default", 100, false, AerolithGameTests::fencesReconnectWhenAssembledAndDocked);
         add("stonewallsuselowarmsofftheworldandreconnectondocking", "default", 100, false, AerolithGameTests::stoneWallsUseLowArmsOffTheWorldAndReconnectOnDocking);
+        add("blocksmeetingatanedgestayonecraft", "default", 100, false, AerolithGameTests::blocksMeetingAtAnEdgeStayOneCraft);
         add("faceadjacentcellsstayonecraftwithoutshapecontact", "default", 100, false, AerolithGameTests::faceAdjacentCellsStayOneCraftWithoutShapeContact);
         add("openinggatekeepsthecraftanditsmass", "default", 100, false, AerolithGameTests::openingGateKeepsTheCraftAndItsMass);
         add("craftlandsatvisiblefenceheight", "default", 160, false, AerolithGameTests::craftLandsAtVisibleFenceHeight);

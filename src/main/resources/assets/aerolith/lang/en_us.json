@@ -23,7 +23,7 @@
   "message.aerolith.spawn_space": "There is room for %1$s of %2$s crafts.",
   "message.aerolith.capacity": "The craft limit has been reached.",
   "message.aerolith.obstructed": "Position blocked: %1$s, %2$s, %3$s.",
-  "message.aerolith.disconnected": "All craft blocks must connect face to face.",
+  "message.aerolith.disconnected": "All craft blocks must touch each other, at least at an edge or a corner.",
   "message.aerolith.permission": "You cannot modify blocks at %1$s, %2$s, %3$s.",
   "message.aerolith.failed": "The craft operation failed.",
   "message.aerolith.assembled": "Craft assembled: %1$s blocks (entity #%2$s).",

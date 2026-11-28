@@ -50,7 +50,7 @@ A craft does not have to be turned back into blocks to change it. The block unde
 - The client tells the server which block and face it saw, and the server accepts that if the block exists and is within reach. Clicks therefore are not lost while the craft moves and the client draws it a few ticks late.
 - **Left click** breaks a block. In **creative** mode it breaks at once (every 5 ticks while held), with no drop. In **survival** hold the button: cracks follow the block, and particles fly when it is hit and when it breaks. The time depends on the block's hardness and your tool, the tool wears, and the drop follows normal harvest rules. **A hit pushes the craft** along your view direction at the point of impact.
 - **Right click with a block in hand** places it in the neighbouring cell on the face you aim at. Slabs and stairs take the top or bottom half from the aim point. The first time a block goes into a new chunk of a craft, the client creates that chunk immediately, so you need not rejoin to see it.
-- A craft stays in one piece as long as its occupied cells connect face to face. The physical shapes need not touch: two slabs in adjacent cells can belong to the same craft with air between their surfaces. If breaking a block disconnects part of a craft, that part becomes a **craft of its own** with the same velocity and spin. The largest piece stays the main craft. When the dimension has no free cells left, the extra pieces fall apart into item drops.
+- A craft stays in one piece as long as its occupied cells touch, face to face, along an edge or at a corner. The physical shapes need not touch: two slabs in adjacent cells can belong to the same craft with air between their surfaces, and two blocks that meet only diagonally are one craft. If breaking a block disconnects part of a craft, that part becomes a **craft of its own** with the same velocity and spin. The largest piece stays the main craft. When the dimension has no free cells left, the extra pieces fall apart into item drops.
 - The owner or an operator can break, place and use blocks. Any block the game allows can be placed, but not into terrain, a living entity or another craft, and an ordinary world block cannot be placed inside a craft.
 
 ### Players and mobs on board
@@ -135,7 +135,7 @@ On an empty flat area **in a test world** take a baseline: run `/aerolith perf r
 - To measure the Rust side alone: `cargo test --release --locked --manifest-path native/Cargo.toml bench_rafts -- --ignored --nocapture`.
 - For dense active contacts between one-block rafts, compile `tools/CubeRaftsBench.java` against the mod JAR and run it with JDK 25:
   ```sh
-  jar=build/libs/aerolith-0.4.6.jar
+  jar=build/libs/aerolith-0.4.7.jar
   javac -proc:none -cp "$jar" -d build/cube-bench tools/CubeRaftsBench.java
   java --enable-native-access=ALL-UNNAMED -cp "build/cube-bench:$jar" dev.aerolith.CubeRaftsBench 80 128 256 512
   ```
